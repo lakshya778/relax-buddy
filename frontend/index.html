@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RelaxBuddy – AI Emotional Support</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- Auth Modal -->
+<div id="authModal" class="auth-modal">
+  <div class="auth-box">
+    <h2>Welcome to RelaxBuddy</h2>
+
+    <input id="loginUser" type="text" placeholder="Username" />
+    <input id="loginPass" type="password" placeholder="Password" />
+
+    <button id="loginBtn" class="btn-primary">Login</button>
+    <button id="signupBtn" class="btn-secondary">Sign Up</button>
+  </div>
+</div>
+
+  <!-- PROFILE MODAL -->
+  <div id="profileModal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <h2>Profile</h2>
+      <label>Display Name</label>
+      <input id="profileName" type="text" placeholder="Your name" />
+      <label>Avatar Initials</label>
+      <input id="profileAvatar" type="text" maxlength="2" placeholder="AB" />
+
+      <button id="profileSave" class="btn primary">Save</button>
+      <button id="profileCancel" class="btn secondary">Cancel</button>
+    </div>
+  </div>
+
+  <!-- MAIN LAYOUT -->
+  <div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <h2 class="logo">RelaxBuddy</h2>
+
+      <button id="newSessionBtn" class="btn small">+ New Chat</button>
+
+      <div id="sessionsList" class="sessions-list"></div>
+    </aside>
+
+    <!-- CHAT AREA -->
+    <main class="chat-area">
+
+      <!-- HEADER -->
+      <div class="chat-header">
+        <h3 id="activeChatTitle">Chat</h3>
+
+        <div class="chat-tools">
+          <button id="searchBtn" class="icon-btn" title="Search">🔍</button>
+          <button id="exportBtn" class="icon-btn" title="Export PDF">📄</button>
+          <button id="lockBtn" class="icon-btn" title="Lock Chat">🔒</button>
+          <button id="deleteBtn" class="icon-btn" title="Delete Chat">🗑️</button>
+
+          <button id="themeToggle" class="icon-btn" title="Toggle Dark Mode">🌙</button>
+
+          <select id="wallpaperSelect" title="Wallpaper" class="wallpaper-select">
+            <option value="wall-default">Default</option>
+            <option value="wall-nature">Nature</option>
+            <option value="wall-lavender">Lavender</option>
+            <option value="wall-dark">Dark</option>
+          </select>
+
+          <button id="emojiBtn" class="icon-btn" title="Emoji">😊</button>
+          <button id="voiceToggleBtn" class="icon-btn" title="Voice Input">🎤</button>
+
+          <button id="profileOpenBtn" class="icon-btn" title="Profile">👤</button>
+        </div>
+      </div>
+
+      <!-- Emoji Picker -->
+      <div id="emojiPicker" class="emoji-picker" style="display:none;"></div>
+
+      <!-- MESSAGES -->
+      <div id="messages" class="messages"></div>
+
+      <!-- COMPOSER -->
+      <div class="composer">
+        <textarea id="input" placeholder="Type your message..." rows="1"></textarea>
+        <button id="sendBtn" class="btn primary send-btn">Send</button>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
