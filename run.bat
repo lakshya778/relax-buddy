@@ -1,20 +1,17 @@
 @echo off
-echo =========================
-echo   Starting RelaxBuddy...
-echo =========================
+REM run.bat - start backend and frontend static server and open browser tabs
+SETLOCAL
 
-REM Start backend
-cd backend
-start "" cmd /k "venv\Scripts\activate && python app.py"
+REM start backend in new window
+start "RelaxBuddy Backend" cmd /k "cd /d %~dp0backend && call venv\Scripts\activate.bat && python app.py"
 
-REM Start frontend on port 8000
-cd ..
-cd frontend
-start "" cmd /k "python -m http.server 8000"
+REM small pause to allow backend to boot
+timeout /t 2 /nobreak >nul
 
-REM Wait 3 seconds, then open browser
-timeout /t 3 >nul
-start "" http://127.0.0.1:8000/
+REM start simple HTTP server for frontend in separate window
+start "RelaxBuddy Frontend" cmd /k "cd /d %~dp0frontend && python -m http.server 8000"
 
-echo Backend & Frontend started successfully!
-pause
+REM open browser tabs
+start "" "http://127.0.0.1:8000/"
+
+ENDLOCAL
