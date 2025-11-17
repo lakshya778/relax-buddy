@@ -1,20 +1,26 @@
-/* GLOBAL */
+/* -----------------------------------------
+   GLOBAL
+----------------------------------------- */
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
   font-family: "Inter", sans-serif;
-  background: linear-gradient(135deg, #e8f5fb, #f8fcff);
   height: 100vh;
   overflow: hidden;
 }
 
+/* -----------------------------------------
+   LAYOUT
+----------------------------------------- */
 .layout {
   display: flex;
   height: 100vh;
 }
 
-/* SIDEBAR */
+/* -----------------------------------------
+   SIDEBAR
+----------------------------------------- */
 .sidebar {
   width: 270px;
   background: #ffffffcc;
@@ -42,21 +48,25 @@ body {
   border-radius: 10px;
   margin-bottom: 10px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: 0.2s;
 }
 
 .session-item:hover {
   background: #d8effb;
 }
 
-/* CHAT AREA */
+/* -----------------------------------------
+   CHAT AREA
+----------------------------------------- */
 .chat-area {
   flex: 1;
   display: flex;
   flex-direction: column;
 }
 
-/* CHAT HEADER */
+/* -----------------------------------------
+   CHAT HEADER
+----------------------------------------- */
 .chat-header {
   padding: 14px 20px;
   background: #ffffffcc;
@@ -74,8 +84,74 @@ body {
   border: none;
   border-radius: 8px;
   cursor: pointer;
+  transition: 0.2s;
 }
 
+/* Mic Active State FIX */
+.icon-btn.active {
+  background: #4b9fff !important;
+  color: #fff !important;
+}
+
+/* -----------------------------------------
+   VOICE SELECTOR (4 BUTTONS)
+----------------------------------------- */
+.voice-selector {
+  display: flex;
+  gap: 6px;
+  margin-right: 10px;
+}
+
+.vs-btn {
+  padding: 6px 10px;
+  font-size: 13px;
+  background: #e9f2ff;
+  border: 1px solid #cfe0ff;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.vs-btn:hover {
+  background: #d8e7ff;
+}
+
+.vs-btn.active {
+  background: #4b9fff;
+  border-color: #1a74e8;
+  color: white;
+}
+
+/* -----------------------------------------
+   AUTO VOICE BUTTONS
+----------------------------------------- */
+#maleBtn,
+#femaleBtn {
+  padding: 6px 12px;
+  background: #e4f0ff;
+  border: 1px solid #c8dfff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 8px;
+  transition: 0.2s;
+}
+
+#maleBtn:hover,
+#femaleBtn:hover {
+  background: #d5e8ff;
+}
+
+#maleBtn.active,
+#femaleBtn.active {
+  background: #4b9fff;
+  color: white;
+  border-color: #1b75e8;
+}
+
+/* -----------------------------------------
+   WALLPAPER DROPDOWN
+----------------------------------------- */
 .wallpaper-select {
   padding: 6px;
   border-radius: 8px;
@@ -83,7 +159,9 @@ body {
   border: 1px solid #d2e4ee;
 }
 
-/* MESSAGES */
+/* -----------------------------------------
+   MESSAGES
+----------------------------------------- */
 .messages {
   flex: 1;
   padding: 20px;
@@ -93,7 +171,9 @@ body {
   gap: 12px;
 }
 
-/* BUBBLES */
+/* -----------------------------------------
+   MESSAGE BUBBLES
+----------------------------------------- */
 .bubble {
   max-width: 75%;
   padding: 12px 16px;
@@ -101,18 +181,41 @@ body {
   font-size: 15px;
   line-height: 1.5;
   animation: fadeIn 0.2s ease;
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.bubble.show {
+  opacity: 1;
+  transform: translateY(0);
+  transition: 0.25s ease;
 }
 
 .bubble.user {
   align-self: flex-end;
   background: #cdeff8;
+  animation: msgEntryUser 0.25s ease;
 }
 
 .bubble.bot {
   align-self: flex-start;
   background: #ffffff;
+  animation: msgEntryBot 0.25s ease;
 }
 
+@keyframes msgEntryUser {
+  from { transform: translateX(6px); opacity: 0; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+
+@keyframes msgEntryBot {
+  from { transform: translateX(-6px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* -----------------------------------------
+   INLINE TYPING BUBBLE
+----------------------------------------- */
 .typing-bubble {
   width: 60px;
   padding: 10px;
@@ -134,16 +237,60 @@ body {
 .typing span:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes typingAnim {
-  0%,80%,100% { opacity:0.3; transform:translateY(0); }
-  40% { opacity:1; transform:translateY(-5px); }
+  0%,80%,100% { opacity: 0.3; transform: translateY(0); }
+  40%         { opacity: 1;   transform: translateY(-5px); }
 }
 
-@keyframes fadeIn {
-  from { opacity:0; transform:translateY(6px); }
-  to { opacity:1; transform:translateY(0); }
+/* -----------------------------------------
+   FLOATING TYPING INDICATOR
+----------------------------------------- */
+.floating-typing {
+  position: fixed;
+  bottom: 120px;
+  right: 30px;
+  padding: 12px 16px;
+  background: #ffffffcc;
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  animation: floatUp 0.4s ease, pulseGlow 3s infinite ease;
+  z-index: 2000;
 }
 
-/* COMPOSER */
+@keyframes floatUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes pulseGlow {
+  0%,100% { box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+  50%     { box-shadow: 0 6px 26px rgba(0,0,0,0.26); }
+}
+
+.loading-waves {
+  display: flex;
+  gap: 4px;
+}
+
+.loading-waves span {
+  width: 6px;
+  height: 6px;
+  background: #7aaec7;
+  border-radius: 50%;
+  animation: waveAnim 0.9s infinite ease-in-out;
+}
+
+.loading-waves span:nth-child(2) { animation-delay: 0.2s; }
+.loading-waves span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes waveAnim {
+  0%,100% { transform: translateY(0); opacity: 0.4; }
+  50%     { transform: translateY(-6px); opacity: 1; }
+}
+
+/* -----------------------------------------
+   COMPOSER
+----------------------------------------- */
 .composer {
   padding: 14px;
   background: #ffffffcc;
@@ -160,9 +307,32 @@ body {
   font-size: 15px;
 }
 
-.send-btn { margin-left: 12px; }
+.send-btn {
+  margin-left: 12px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: #5ab1e2;
+  color: white;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: 0.2s ease;
+}
 
-/* EMOJI PICKER */
+.send-btn.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.send-btn .tiny-wave {
+  position: absolute;
+  right: -6px;
+  top: -6px;
+}
+
+/* -----------------------------------------
+   EMOJI PICKER
+----------------------------------------- */
 .emoji-picker {
   position: absolute;
   bottom: 95px;
@@ -174,9 +344,20 @@ body {
   box-shadow: 0 12px 30px rgba(0,0,0,0.15);
   max-height: 260px;
   overflow-y: auto;
+  z-index: 2000;
 }
 
-/* MODALS */
+.emoji-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  padding: 6px;
+  cursor: pointer;
+}
+
+/* -----------------------------------------
+   MODALS
+----------------------------------------- */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -193,7 +374,6 @@ body {
   width: 320px;
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.15);
-  animation: fadeIn 0.25s ease;
 }
 
 .modal input {
@@ -204,7 +384,9 @@ body {
   border: 1px solid #d2e4ee;
 }
 
-/* TOAST */
+/* -----------------------------------------
+   TOAST
+----------------------------------------- */
 #toast-container {
   position: fixed;
   top: 20px;
@@ -223,32 +405,39 @@ body {
   transition: 0.3s ease;
 }
 
-.toast.show {
-  opacity: 1;
-  transform: translateX(0);
-}
+/* -----------------------------------------
+   WALLPAPERS (NOT BROKEN ANYMORE)
+----------------------------------------- */
+.wall-default { background: linear-gradient(135deg,#e8f5fb,#f8fcff)!important; }
+.wall-lavender { background: linear-gradient(135deg,#eee4ff,#f6f4ff)!important; }
+.wall-nature { background: url('nature.jpg') center/cover no-repeat!important; }
+.wall-dark { background: linear-gradient(135deg,#0b1a27,#0a121b)!important; color:#e8f5ff; }
 
-/* WALLPAPER THEMES */
-.wall-default { background: linear-gradient(135deg,#e8f5fb,#f8fcff) !important; }
-.wall-lavender { background: linear-gradient(135deg,#eee4ff,#f6f4ff) !important; }
-.wall-dark { background: linear-gradient(135deg,#0b1a27,#0a121b) !important; color:#e8f5ff; }
-
-/* DARK MODE */
+/* -----------------------------------------
+   DARK MODE FIXED
+----------------------------------------- */
 .theme-dark {
-  background: #071019;
-  color: #e0f3ff;
+  background: #071019 !important;
+  color: #e0f3ff !important;
 }
 
 .theme-dark .sidebar,
 .theme-dark .chat-header,
 .theme-dark .composer {
-  background: #0d1b25cc;
-  color: #e8faff;
+  background: #0d1b25cc !important;
+  color: #e8faff !important;
 }
 
-.theme-dark .bubble.user { background:#103549; color:#d1f4ff; }
-.theme-dark .bubble.bot { background:#0d1f2b; color:#ddf4ff; }
+.theme-dark .bubble.user { background:#103549 !important; color:#d1f4ff !important; }
+.theme-dark .bubble.bot { background:#0d1f2b !important; color:#ddf4ff !important; }
 
+.theme-dark.wall-dark {
+  background: linear-gradient(135deg,#0b1a27,#0a121b)!important;
+}
+
+/* -----------------------------------------
+   AUTH MODAL
+----------------------------------------- */
 .auth-modal {
   position: fixed;
   inset: 0;
@@ -278,6 +467,7 @@ body {
   font-size: 15px;
 }
 
+/* Buttons */
 .btn-primary,
 .btn-secondary {
   padding: 12px;
@@ -292,9 +482,10 @@ body {
   color: white;
 }
 
-.btn-secondary {
-  background: #e6e6e6;
-}
 .btn-primary:hover {
   background: #489acb;
+}
+
+.btn-secondary {
+  background: #e6e6e6;
 }

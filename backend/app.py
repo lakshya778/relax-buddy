@@ -15,6 +15,10 @@ from prompts import SYSTEM_PROMPT
 from dotenv import load_dotenv
 from groq import Groq
 from reportlab.pdfgen import canvas
+import subprocess
+from gtts import gTTS
+from flask import send_file
+from flask import send_file, jsonify
 
 # load env
 load_dotenv()
@@ -202,6 +206,54 @@ def logout():
     db.execute("UPDATE users SET token = NULL, token_expiry = NULL WHERE id = ?", (user["id"],))
     db.commit()
     return jsonify({"ok": True})
+# ---------------------------
+#Voice generation
+# ---------------------------
+
+@app.route("/tts_female", methods=["POST"])
+def tts_female():
+    data = request.get_json()
+    text = data.get("text", "")
+
+    base = generate_tts(text)      # original female-ish
+    return send_file(base, mimetype="audio/mpeg")
+
+
+@app.route("/tts_male", methods=["POST"])
+def tts_male():
+    data = request.get_json()
+    text = data.get("text", "")
+
+    base = generate_tts(text)
+    shifted = ffmpeg_pitch_shift(base, -4)   # lower pitch for male voice
+
+    return send_file(shifted, mimetype="audio/mpeg")
+
+
+def generate_tts(text):
+    buf = io.BytesIO()
+    tts = gTTS(text=text, lang="hi")
+    tts.write_to_fp(buf)
+    buf.seek(0)
+    return buf
+
+def ffmpeg_pitch_shift(input_bytes, semitone_shift):
+    input_buf = io.BytesIO(input_bytes.getvalue())
+
+    process = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-i", "pipe:0",
+            "-af", f"asetrate=44100*{2**(semitone_shift/12)},aresample=44100",
+            "-f", "mp3",
+            "pipe:1"
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    out, err = process.communicate(input_buf.read())
+    return io.BytesIO(out)
 
 # ---------------------------
 # Session and message helpers
