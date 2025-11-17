@@ -1,11 +1,13 @@
-/* RelaxBuddy — FIXED script.js
-   Keep same features, but fixed bugs:
-   - floating typing show/hide (works with existing HTML)
-   - safe emoji-picker toggle & outside-click handling
-   - stubs for missing session/export/lock/search functions
-   - robust session id handling (id vs session_id)
-   - safe null checks for DOM refs
-   - minor UX improvements (toast when required)
+/* RelaxBuddy — script.fixed.js
+   Fully patched version (replace your script.js with this file)
+   Key fixes:
+   - Fixed signup handler logic
+   - Robust null checks for DOM refs
+   - Safe emoji picker toggle & outside-click handling
+   - Improved speech-recognition result handling (no duplicate appends)
+   - More tolerant session id handling from server (session_id / id / sessionId)
+   - Minor UX touches: focus after emoji pick, hide emoji after pick
+   - Safer load/save profile and wallpaper handling
 */
 
 const API_BASE = "http://127.0.0.1:5000";
@@ -203,9 +205,11 @@ async function signup(username, password) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     });
-    return await res.json();
+    const data = await res.json();
+    // return both status and body so callers can check
+    return { ok: res.ok, status: res.status, body: data };
   } catch (e) {
-    return { error: e.message || "Network error" };
+    return { ok: false, error: e.message || "Network error" };
   }
 }
 
@@ -251,6 +255,10 @@ async function logout() {
 }
 
 // ---------- Sessions ----------
+function extractSessionId(d) {
+  return d?.session_id || d?.id || d?.sessionId || null;
+}
+
 async function fetchSessions() {
   if (!state.token) return;
   try {
@@ -260,8 +268,8 @@ async function fetchSessions() {
     state.sessions = Array.isArray(arr) ? arr : [];
     renderSessions();
     if (!state.activeSessionId && state.sessions.length > 0) {
-      const id = state.sessions[0].id || state.sessions[0].session_id;
-      openSession(id);
+      const id = extractSessionId(state.sessions[0]);
+      if (id) openSession(id);
     }
   } catch (e) {
     console.error("fetchSessions:", e);
@@ -272,11 +280,12 @@ function renderSessions() {
   if (!sessionsList) return;
   sessionsList.innerHTML = "";
   state.sessions.forEach(s => {
-    const id = s.id || s.session_id;
+    const id = extractSessionId(s);
     const el = document.createElement("div");
     el.className = "session-item";
     el.textContent = (s.name || "Chat") + (s.locked ? " 🔒" : "");
-    el.onclick = () => openSession(id);
+    el.dataset.sessionId = id || "";
+    el.onclick = () => { if (id) openSession(id); };
     sessionsList.appendChild(el);
   });
 }
@@ -294,7 +303,8 @@ async function createNewSession() {
     if (res.ok) {
       showToast("Session created", "success");
       await fetchSessions();
-      openSession(d.session_id);
+      const newId = extractSessionId(d);
+      if (newId) openSession(newId);
     } else {
       showToast(d.error || "Error", "error");
     }
@@ -325,10 +335,12 @@ async function openSession(id) {
     const msgs = await res.json();
     state.activeSessionId = id;
     if (messagesEl) messagesEl.innerHTML = "";
-    msgs.forEach(m => {
-      if (m.sender === "user") appendUserBubble(m.text);
-      else appendBotBubble(m.text);
-    });
+    if (Array.isArray(msgs)) {
+      msgs.forEach(m => {
+        if (m.sender === "user") appendUserBubble(m.text);
+        else appendBotBubble(m.text);
+      });
+    }
   } catch (e) {
     console.error(e);
   }
@@ -344,7 +356,7 @@ async function startStreamingReply(userText, sessionId) {
         body: JSON.stringify({ name: "Chat" })
       });
       const d = await newRes.json();
-      sessionId = d.session_id;
+      sessionId = extractSessionId(d);
       await fetchSessions();
     } catch (e) {
       console.error(e);
@@ -429,7 +441,8 @@ async function fallbackChat(userText, sessionId) {
     });
     const d = await res.json();
     appendBotBubble(d.reply || "No reply");
-    if (d.session_id) await openSession(d.session_id);
+    const sid = extractSessionId(d);
+    if (sid) await openSession(sid);
   } catch (e) {
     console.error(e);
   }
@@ -457,10 +470,10 @@ function loadAllVoices() {
   voices = speechSynthesis.getVoices() || [];
 
   enFemale = voices.find(v => /^en/i.test(v.lang) && /female/i.test(v.name))
-    || voices.find(v => /^en/i.test(v.lang)) || voices[0];
+    || voices.find(v => /^en/i.test(v.lang)) || voices[0] || null;
 
   enMale = voices.find(v => /^en/i.test(v.lang) && /male/i.test(v.name))
-    || voices.find(v => /^en/i.test(v.lang)) || voices[1] || voices[0];
+    || voices.find(v => /^en/i.test(v.lang)) || voices[1] || voices[0] || null;
 
   hiFemale = voices.find(v => /^hi/i.test(v.lang) && /female/i.test(v.name))
     || voices.find(v => /^hi/i.test(v.lang)) || enFemale;
@@ -468,7 +481,7 @@ function loadAllVoices() {
   hiMale = voices.find(v => /^hi/i.test(v.lang) && /male/i.test(v.name))
     || voices.find(v => /^hi/i.test(v.lang)) || enMale;
 
-  console.log("Voices loaded");
+  console.log("Voices loaded", { enFemale, enMale, hiFemale, hiMale });
 }
 
 if ("speechSynthesis" in window) {
@@ -510,30 +523,32 @@ if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
 
   recognition.onstart = () => {
     recognizing = true;
-    voiceToggleBtn?.classList.add("active");
+    if (voiceToggleBtn) voiceToggleBtn.classList.add("active");
     showToast("Recording...");
   };
 
   recognition.onerror = e => {
     recognizing = false;
-    voiceToggleBtn?.classList.remove("active");
+    if (voiceToggleBtn) voiceToggleBtn.classList.remove("active");
   };
 
   recognition.onend = () => {
     recognizing = false;
-    voiceToggleBtn?.classList.remove("active");
+    if (voiceToggleBtn) voiceToggleBtn.classList.remove("active");
   };
 
   recognition.onresult = ev => {
+    if (!inputEl) return;
     let interim = "", final = "";
     for (let i = 0; i < ev.results.length; i++) {
       const r = ev.results[i];
       if (r.isFinal) final += r[0].transcript;
       else interim += r[0].transcript;
     }
-    inputEl.value =
-      (inputEl.value ? inputEl.value + " " : "") +
-      final + (interim ? " " + interim : "");
+    // replace current input value with final+interim (avoid duplicate append behavior)
+    const base = inputEl.value || "";
+    // If the base already contains the final text, avoid duplicating: prefer to replace whole content
+    inputEl.value = (base && base.trim().length > 0 && !final) ? base + (interim ? " " + interim : "") : (final + (interim ? " " + interim : ""));
   };
 }
 
@@ -551,9 +566,16 @@ function buildEmojiPicker() {
     b.className = "emoji-btn";
     b.textContent = e;
     b.onclick = () => {
+      if (!inputEl) return;
       const st = inputEl.selectionStart || inputEl.value.length;
-      inputEl.value =
-        inputEl.value.slice(0, st) + e + inputEl.value.slice(st);
+      inputEl.value = inputEl.value.slice(0, st) + e + inputEl.value.slice(st);
+      // move caret after inserted emoji
+      try {
+        inputEl.focus();
+        inputEl.selectionStart = inputEl.selectionEnd = st + e.length;
+      } catch (err) {}
+      // close picker after pick
+      emojiPicker.style.display = "none";
     };
     emojiPicker.appendChild(b);
   });
@@ -562,19 +584,20 @@ function buildEmojiPicker() {
 // ---------- Profile ----------
 function loadProfile() {
   const p = JSON.parse(localStorage.getItem("rb_profile") || "{}");
-  profileName.value = p.name || "";
-  profileAvatar.value = p.avatar || "";
-  profileOpenBtn.innerText = p.avatar || (p.name ? p.name.slice(0,2).toUpperCase() : "A");
+  if (profileName) profileName.value = p.name || "";
+  if (profileAvatar) profileAvatar.value = p.avatar || "";
+  if (profileOpenBtn) profileOpenBtn.innerText = p.avatar || (p.name ? p.name.slice(0,2).toUpperCase() : "A");
 }
 
 function saveProfile() {
+  if (!profileName || !profileAvatar) return;
   const p = {
     name: profileName.value,
     avatar: profileAvatar.value.slice(0,2).toUpperCase()
   };
   localStorage.setItem("rb_profile", JSON.stringify(p));
   loadProfile();
-  profileModal.style.display = "none";
+  if (profileModal) profileModal.style.display = "none";
   showToast("Saved!");
 }
 
@@ -586,11 +609,10 @@ function loadThemeAndWallpaper() {
   if (theme === "dark") document.body.classList.add("theme-dark");
 
   const wall = localStorage.getItem("rb_wallpaper") || "wall-default";
-  ["wall-default","wall-nature","wall-lavender","wall-dark"]
-    .forEach(c => document.body.classList.remove(c));
+  ["wall-default","wall-nature","wall-lavender","wall-dark"].forEach(c => document.body.classList.remove(c));
   document.body.classList.add(wall);
 
-  wallpaperSelect.value = wall;
+  if (wallpaperSelect) wallpaperSelect.value = wall;
 }
 
 function toggleTheme() {
@@ -599,8 +621,7 @@ function toggleTheme() {
 }
 
 function wallpaperChanged(v) {
-  ["wall-default","wall-nature","wall-lavender","wall-dark"]
-    .forEach(c => document.body.classList.remove(c));
+  ["wall-default","wall-nature","wall-lavender","wall-dark"].forEach(c => document.body.classList.remove(c));
   document.body.classList.add(v);
   localStorage.setItem("rb_wallpaper", v);
 }
@@ -625,85 +646,93 @@ function searchInSession() {
 
 // ---------- Bind Events ----------
 function bindEvents() {
-  maleBtnEl?.addEventListener("click", () => {
+  if (maleBtnEl) maleBtnEl.addEventListener("click", () => {
     voiceMode = "male";
     maleBtnEl.classList.add("active");
-    femaleBtnEl?.classList.remove("active");
+    if (femaleBtnEl) femaleBtnEl.classList.remove("active");
     showToast("Male voice selected");
   });
 
-  femaleBtnEl?.addEventListener("click", () => {
+  if (femaleBtnEl) femaleBtnEl.addEventListener("click", () => {
     voiceMode = "female";
     femaleBtnEl.classList.add("active");
-    maleBtnEl?.classList.remove("active");
+    if (maleBtnEl) maleBtnEl.classList.remove("active");
     showToast("Female voice selected");
   });
 
-  signupBtn?.addEventListener("click", async () => {
-    const u = loginUser.value.trim();
-    const p = loginPass.value;
+  if (signupBtn) signupBtn.addEventListener("click", async () => {
+    const u = (loginUser?.value || "").trim();
+    const p = loginPass?.value || "";
     if (!u || !p) return showToast("Enter credentials");
     const res = await signup(u,p);
-    if (res.ok) showToast("Sign up successful");
-    else showToast(res.error);
+    if (res.ok) showToast("Sign up successful", "success");
+    else showToast(res.body?.error || res.error || "Sign up failed", "error");
   });
 
-  loginBtn?.addEventListener("click", async () => {
-    const u = loginUser.value.trim();
-    const p = loginPass.value;
+  if (loginBtn) loginBtn.addEventListener("click", async () => {
+    const u = (loginUser?.value || "").trim();
+    const p = loginPass?.value || "";
     if (!u || !p) return showToast("Enter credentials");
     await login(u,p);
   });
 
-  profileOpenBtn?.addEventListener("click", () => {
-    profileModal.style.display = "flex";
+  if (profileOpenBtn) profileOpenBtn.addEventListener("click", () => {
+    if (profileModal) profileModal.style.display = "flex";
     loadProfile();
   });
 
-  profileCancel?.addEventListener("click", () => profileModal.style.display = "none");
-  profileSave?.addEventListener("click", saveProfile);
+  if (profileCancel) profileCancel.addEventListener("click", () => { if (profileModal) profileModal.style.display = "none"; });
+  if (profileSave) profileSave.addEventListener("click", saveProfile);
 
-  sendBtn?.addEventListener("click", async () => {
-    const txt = inputEl.value.trim();
+  if (sendBtn) sendBtn.addEventListener("click", async () => {
+    const txt = (inputEl?.value || "").trim();
     if (!txt) return showToast("Write something");
     if (!state.token) return showToast("Login required");
     await startStreamingReply(txt, state.activeSessionId);
-    inputEl.value = "";
+    if (inputEl) inputEl.value = "";
   });
 
-  inputEl?.addEventListener("keydown", e => {
+  if (inputEl) inputEl.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendBtn.click();
+      if (sendBtn) sendBtn.click();
     }
   });
 
-  newSessionBtn?.addEventListener("click", createNewSession);
-  deleteBtn?.addEventListener("click", deleteCurrentSession);
-  exportBtn?.addEventListener("click", exportCurrentSessionPDF);
-  lockBtn?.addEventListener("click", lockCurrentSessionWithPin);
-  searchBtn?.addEventListener("click", searchInSession);
+  if (newSessionBtn) newSessionBtn.addEventListener("click", createNewSession);
+  if (deleteBtn) deleteBtn.addEventListener("click", deleteCurrentSession);
+  if (exportBtn) exportBtn.addEventListener("click", exportCurrentSessionPDF);
+  if (lockBtn) lockBtn.addEventListener("click", lockCurrentSessionWithPin);
+  if (searchBtn) searchBtn.addEventListener("click", searchInSession);
 
-  emojiBtn?.addEventListener("click", () => {
-    emojiPicker.style.display =
-      emojiPicker.style.display === "block" ? "none" : "block";
-  });
+  if (emojiBtn && emojiPicker) {
+    emojiBtn.addEventListener("click", () => {
+      emojiPicker.style.display = emojiPicker.style.display === "block" ? "none" : "block";
+      if (emojiPicker.style.display === "block") {
+        // ensure future clicks outside hide it
+      }
+    });
 
-  document.addEventListener("click", e => {
-    if (!emojiPicker.contains(e.target) && !emojiBtn.contains(e.target)) {
-      emojiPicker.style.display = "none";
-    }
-  });
+    // outside click: safe checks
+    document.addEventListener("click", e => {
+      try {
+        const target = e.target;
+        if (!emojiPicker || !emojiBtn) return;
+        if (emojiPicker.contains(target) || emojiBtn.contains(target)) return;
+        emojiPicker.style.display = "none";
+      } catch (err) {}
+    });
+  }
 
-  voiceToggleBtn?.addEventListener("click", () => {
+  if (voiceToggleBtn) voiceToggleBtn.addEventListener("click", () => {
     if (!recognition) return showToast("Speech recognition unsupported");
     if (!recognizing) {
-      try { recognition.start(); } catch {}
+      try { recognition.start(); } catch (err) { console.warn(err); }
     } else recognition.stop();
   });
 
-  themeToggle?.addEventListener("click", toggleTheme);
-  wallpaperSelect?.addEventListener("change", e => wallpaperChanged(e.target.value));
+  if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
+  if (wallpaperSelect) wallpaperSelect.addEventListener("change", e => wallpaperChanged(e.target.value));
 }
 
 // ---------- Init ----------
@@ -742,9 +771,10 @@ window.addEventListener("DOMContentLoaded", () => {
   const floatEl = $("floatingTyping");
   if (floatEl) floatEl.style.display = "none";
 
-  if (!state.token) authModal.style.display = "flex";
-  else {
-    authModal.style.display = "none";
+  if (!state.token) {
+    if (authModal) authModal.style.display = "flex";
+  } else {
+    if (authModal) authModal.style.display = "none";
     fetchSessions();
   }
 

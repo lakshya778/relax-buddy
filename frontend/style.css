@@ -8,14 +8,15 @@ body {
   font-family: "Inter", sans-serif;
   height: 100vh;
   overflow: hidden;
+  background-size: cover !important;
+  background-repeat: no-repeat !important;
 }
 
-/* -----------------------------------------
-   LAYOUT
------------------------------------------ */
+/* Prevent wallpaper being hidden by layout */
 .layout {
   display: flex;
   height: 100vh;
+  background: transparent !important;
 }
 
 /* -----------------------------------------
@@ -87,10 +88,11 @@ body {
   transition: 0.2s;
 }
 
-/* Mic Active State FIX */
+/* FIX — Mic Active Highlight */
 .icon-btn.active {
   background: #4b9fff !important;
   color: #fff !important;
+  border-color: #1a70e5 !important;
 }
 
 /* -----------------------------------------
@@ -117,7 +119,7 @@ body {
 }
 
 .vs-btn.active {
-  background: #4b9fff;
+  background: #4b9fff !important;
   border-color: #1a74e8;
   color: white;
 }
@@ -144,13 +146,13 @@ body {
 
 #maleBtn.active,
 #femaleBtn.active {
-  background: #4b9fff;
-  color: white;
-  border-color: #1b75e8;
+  background: #4b9fff !important;
+  color: white !important;
+  border-color: #1b75e8 !important;
 }
 
 /* -----------------------------------------
-   WALLPAPER DROPDOWN
+   WALLPAPER SELECT
 ----------------------------------------- */
 .wallpaper-select {
   padding: 6px;
@@ -180,41 +182,28 @@ body {
   border-radius: 14px;
   font-size: 15px;
   line-height: 1.5;
-  animation: fadeIn 0.2s ease;
   opacity: 0;
   transform: translateY(8px);
+  transition: 0.25s ease;
 }
 
 .bubble.show {
   opacity: 1;
   transform: translateY(0);
-  transition: 0.25s ease;
 }
 
 .bubble.user {
   align-self: flex-end;
   background: #cdeff8;
-  animation: msgEntryUser 0.25s ease;
 }
 
 .bubble.bot {
   align-self: flex-start;
   background: #ffffff;
-  animation: msgEntryBot 0.25s ease;
-}
-
-@keyframes msgEntryUser {
-  from { transform: translateX(6px); opacity: 0; }
-  to   { transform: translateX(0);   opacity: 1; }
-}
-
-@keyframes msgEntryBot {
-  from { transform: translateX(-6px); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
 }
 
 /* -----------------------------------------
-   INLINE TYPING BUBBLE
+   INLINE TYPING
 ----------------------------------------- */
 .typing-bubble {
   width: 60px;
@@ -242,7 +231,7 @@ body {
 }
 
 /* -----------------------------------------
-   FLOATING TYPING INDICATOR
+   FLOATING TYPING
 ----------------------------------------- */
 .floating-typing {
   position: fixed;
@@ -324,12 +313,6 @@ body {
   pointer-events: none;
 }
 
-.send-btn .tiny-wave {
-  position: absolute;
-  right: -6px;
-  top: -6px;
-}
-
 /* -----------------------------------------
    EMOJI PICKER
 ----------------------------------------- */
@@ -406,17 +389,28 @@ body {
 }
 
 /* -----------------------------------------
-   WALLPAPERS (NOT BROKEN ANYMORE)
+   WALLPAPERS — FIXED
 ----------------------------------------- */
-.wall-default { background: linear-gradient(135deg,#e8f5fb,#f8fcff)!important; }
-.wall-lavender { background: linear-gradient(135deg,#eee4ff,#f6f4ff)!important; }
-.wall-nature { background: url('nature.jpg') center/cover no-repeat!important; }
-.wall-dark { background: linear-gradient(135deg,#0b1a27,#0a121b)!important; color:#e8f5ff; }
+body.wall-default {
+  background: linear-gradient(135deg,#e8f5fb,#f8fcff) !important;
+}
+
+body.wall-lavender {
+  background: linear-gradient(135deg,#eee4ff,#f6f4ff) !important;
+}
+
+body.wall-nature {
+  background: url("nature.jpg") center/cover no-repeat !important;
+}
+
+body.wall-dark {
+  background: linear-gradient(135deg,#0b1a27,#0a121b) !important;
+}
 
 /* -----------------------------------------
-   DARK MODE FIXED
+   DARK MODE — FIXED & CORRECT PRIORITY
 ----------------------------------------- */
-.theme-dark {
+body.theme-dark {
   background: #071019 !important;
   color: #e0f3ff !important;
 }
@@ -428,11 +422,24 @@ body {
   color: #e8faff !important;
 }
 
-.theme-dark .bubble.user { background:#103549 !important; color:#d1f4ff !important; }
-.theme-dark .bubble.bot { background:#0d1f2b !important; color:#ddf4ff !important; }
+.theme-dark .session-item {
+  background: #102431 !important;
+  color: #d2f1ff !important;
+  border-color: #0f2a3a;
+}
+
+.theme-dark .bubble.user {
+  background: #103549 !important;
+  color: #d1f4ff !important;
+}
+
+.theme-dark .bubble.bot {
+  background: #0d1f2b !important;
+  color: #ddf4ff !important;
+}
 
 .theme-dark.wall-dark {
-  background: linear-gradient(135deg,#0b1a27,#0a121b)!important;
+  background: linear-gradient(135deg,#0b1a27,#0a121b) !important;
 }
 
 /* -----------------------------------------
