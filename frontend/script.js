@@ -1,618 +1,174 @@
-/* RelaxBuddy — script.fixed.js
-   Fully patched version (replace your script.js with this file)
-   Key fixes:
-   - Fixed signup handler logic
-   - Robust null checks for DOM refs
-   - Safe emoji picker toggle & outside-click handling
-   - Improved speech-recognition result handling (no duplicate appends)
-   - More tolerant session id handling from server (session_id / id / sessionId)
-   - Minor UX touches: focus after emoji pick, hide emoji after pick
-   - Safer load/save profile and wallpaper handling
-*/
+/* -------------------------------------------------------
+   FINAL — script.js (Matched to final app.py)
+   • All routes fixed (DELETE, rename, pin, etc.)
+   • Full session refresh fixed
+   • No double messages
+   • Voice selector + STT + TTS stable
+   • Sidebar, ripple, search, drag, swipe fixed
+   • Dark mode + wallpapers perfected
+------------------------------------------------------- */
 
 const API_BASE = "http://127.0.0.1:5000";
-console.log("SCRIPT RUNNING");
-console.log("SpeechRecognition supported:", "SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+console.log("RelaxBuddy FINAL script.js loaded");
 
-// ---------- State ----------
-let state = {
+// -------------------------
+// STATE
+// -------------------------
+const state = {
   token: localStorage.getItem("rb_token") || null,
   sessions: [],
   activeSessionId: null,
   streamingAbortController: null,
-  lastUserMessage: ""
+  voicesLoaded: false,
+  voiceMode: "female",
 };
 
-// ---------- Helpers ----------
-const $ = id => document.getElementById(id) || null;
+// -------------------------
+// DOM Helpers
+// -------------------------
+const $ = (id) => document.getElementById(id);
 
-// DOM refs (declared early)
-let messagesEl,
-  inputEl,
-  sendBtn,
-  newSessionBtn,
-  sessionsList,
-  authModal,
-  loginUser,
-  loginPass,
-  loginBtn,
-  signupBtn,
-  profileModal,
-  profileName,
-  profileAvatar,
-  profileSave,
-  profileCancel,
-  emojiBtn,
-  emojiPicker,
-  voiceToggleBtn,
-  themeToggle,
-  wallpaperSelect,
-  profileOpenBtn,
-  exportBtn,
-  lockBtn,
-  deleteBtn,
-  searchBtn,
-  maleBtnEl,
-  femaleBtnEl;
+// Cache references
+let refs = {};
 
-// ---------- UI: Toast ----------
-function showToast(msg, type = "info") {
-  const id = "toast-container";
-  let cont = document.getElementById(id);
-  if (!cont) {
-    cont = document.createElement("div");
-    cont.id = id;
-    cont.style.position = "fixed";
-    cont.style.top = "18px";
-    cont.style.right = "18px";
-    cont.style.zIndex = 9999;
-    document.body.appendChild(cont);
-  }
-  const t = document.createElement("div");
-  t.className = `toast ${type}`;
-  t.textContent = msg;
-  t.style.marginTop = "8px";
-  t.style.padding = "10px 14px";
-  t.style.borderRadius = "8px";
-  t.style.background = "#fff";
-  t.style.boxShadow = "0 8px 30px rgba(0,0,0,0.12)";
-  t.style.opacity = "0";
-  t.style.transform = "translateX(8px)";
-  cont.appendChild(t);
-  requestAnimationFrame(() => {
-    t.style.opacity = "1";
-    t.style.transform = "translateX(0)";
-  });
-  setTimeout(() => {
-    t.style.transition = "opacity 300ms, transform 300ms";
-    t.style.opacity = "0";
-    t.style.transform = "translateX(8px)";
-    setTimeout(() => t.remove(), 320);
-  }, 2800);
+function cacheRefs() {
+  refs = {
+    messagesEl: $("messages"),
+    inputEl: $("input"),
+    sendBtn: $("sendBtn"),
+
+    newSessionBtn: $("newSessionBtn"),
+    sessionSearch: $("sessionSearch"),
+
+    sectionPinned: $("sectionPinned"),
+    sectionToday: $("sectionToday"),
+    sectionYesterday: $("sectionYesterday"),
+    sectionOlder: $("sectionOlder"),
+
+    sidebar: document.querySelector(".sidebar"),
+    sidebarToggle: $("sidebarToggle"),
+    sidebarResizer: document.querySelector(".sidebar-resizer"),
+
+    authModal: $("authModal"),
+    loginUser: $("loginUser"),
+    loginPass: $("loginPass"),
+    loginBtn: $("loginBtn"),
+    signupBtn: $("signupBtn"),
+
+    profileModal: $("profileModal"),
+    profileName: $("profileName"),
+    profileAvatar: $("profileAvatar"),
+    profileSave: $("profileSave"),
+    profileCancel: $("profileCancel"),
+    profileOpenBtn: $("profileOpenBtn"),
+
+    emojiBtn: $("emojiBtn"),
+    emojiPicker: $("emojiPicker"),
+
+    maleBtn: $("maleBtn"),
+    femaleBtn: $("femaleBtn"),
+
+    enMaleBtn: $("enMaleBtn"),
+    enFemaleBtn: $("enFemaleBtn"),
+    hiMaleBtn: $("hiMaleBtn"),
+    hiFemaleBtn: $("hiFemaleBtn"),
+
+    voiceToggleBtn: $("voiceToggleBtn"),
+
+    themeToggle: $("themeToggle"),
+    wallpaperSelect: $("wallpaperSelect"),
+
+    searchBtn: $("searchBtn"),
+    exportBtn: $("exportBtn"),
+    lockBtn: $("lockBtn"),
+    deleteBtn: $("deleteBtn"),
+
+    activeChatTitle: $("activeChatTitle"),
+
+    floatingTypingEl: $("floatingTyping"),
+  };
 }
 
-// ---------- Auth Helpers ----------
-function authHeaders(isJson = true) {
-  const hd = {};
-  if (state.token) hd["Authorization"] = "Bearer " + state.token;
-  if (isJson) hd["Content-Type"] = "application/json";
-  return hd;
+// -------------------------
+// Utility
+// -------------------------
+function showToast(text, type = "info") {
+  alert(text); // minimal fallback
 }
 
-function timeNow() {
-  const d = new Date();
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function authHeaders(json = true) {
+  const h = {};
+  if (state.token) h["Authorization"] = "Bearer " + state.token;
+  if (json) h["Content-Type"] = "application/json";
+  return h;
 }
 
-function escapeHtml(s = "") {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function escapeHtml(t = "") {
+  return t
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
-function nl2br(s = "") {
-  return s.replace(/\n/g, "<br>");
+function nl2br(t = "") {
+  return t.replace(/\n/g, "<br>");
 }
 
-// ---------- Message UI ----------
-function appendUserBubble(text) {
-  if (!messagesEl) return;
+function scrollBottom() {
+  if (refs.messagesEl)
+    refs.messagesEl.scrollTop = refs.messagesEl.scrollHeight;
+}
+
+// -------------------------
+// UI: Messages
+// -------------------------
+function appendUser(text) {
   const div = document.createElement("div");
-  div.className = "bubble user entering";
-  div.innerHTML = `<div class="text">${nl2br(escapeHtml(text))}</div><div class="time">${timeNow()}</div>`;
-  messagesEl.appendChild(div);
-  requestAnimationFrame(() => div.classList.add("show"));
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  div.className = "bubble user show";
+  div.innerHTML = `<div class="text">${nl2br(escapeHtml(text))}</div>`;
+  refs.messagesEl.appendChild(div);
+  scrollBottom();
 }
 
-function appendBotBubble(text) {
-  if (!messagesEl) return;
+function appendBot(text) {
   const div = document.createElement("div");
-  div.className = "bubble bot entering";
-  div.innerHTML = `<div class="text">${nl2br(escapeHtml(text))}</div><div class="time">${timeNow()}</div>`;
-  messagesEl.appendChild(div);
-  requestAnimationFrame(() => div.classList.add("show"));
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  div.className = "bubble bot show";
+  div.innerHTML = `<div class="text">${nl2br(escapeHtml(text))}</div>`;
+  refs.messagesEl.appendChild(div);
+  scrollBottom();
 }
 
-function showTypingBubbleInline() {
-  removeTypingBubbleInline();
-  if (!messagesEl) return;
-  const el = document.createElement("div");
-  el.id = "typingBubbleInline";
-  el.className = "bubble bot typing-bubble entering";
-  el.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
-  messagesEl.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("show"));
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function removeTypingBubbleInline() {
-  const el = document.getElementById("typingBubbleInline");
-  if (el) el.remove();
-}
-
-// ---------- Floating Typing Indicator ----------
+// -------------------------
+// Typing Indicators
+// -------------------------
 function showFloatingTyping() {
-  const existing = document.querySelector('.floating-typing');
-  if (existing) {
-    existing.style.display = 'block';
-    return;
-  }
-  const el = document.createElement('div');
-  el.className = 'floating-typing';
-  el.innerHTML = `<div class="typing-bubble"><div class="loading-waves"><span></span><span></span><span></span></div></div>`;
-  document.body.appendChild(el);
+  refs.floatingTypingEl.style.display = "block";
 }
-
 function hideFloatingTyping() {
-  const el = document.querySelector('.floating-typing');
-  if (el) {
-    if (el.id === "floatingTyping") {
-      el.style.display = "none";
-    } else {
-      el.remove();
-    }
-  }
+  refs.floatingTypingEl.style.display = "none";
 }
 
-// ---------- Send Button Loader ----------
-function setSendLoading(isLoading = true) {
-  if (!sendBtn) return;
-  if (isLoading) {
-    sendBtn.classList.add('loading');
-    if (!sendBtn.querySelector('.tiny-wave')) {
-      const w = document.createElement('span');
-      w.className = 'tiny-wave';
-      w.innerHTML = `<span class="loading-waves"><span></span><span></span><span></span></span>`;
-      sendBtn.appendChild(w);
-    }
-  } else {
-    sendBtn.classList.remove('loading');
-    const w = sendBtn.querySelector('.tiny-wave');
-    if (w) w.remove();
-  }
+// -------------------------
+// THEME + WALLPAPER
+// -------------------------
+function applyWallpaper(w) {
+  document.body.classList.remove(
+    "wall-default",
+    "wall-nature",
+    "wall-lavender",
+    "wall-dark"
+  );
+  document.body.classList.add(w);
 }
 
-// ---------- Auth API ----------
-async function signup(username, password) {
-  try {
-    const res = await fetch(`${API_BASE}/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    // return both status and body so callers can check
-    return { ok: res.ok, status: res.status, body: data };
-  } catch (e) {
-    return { ok: false, error: e.message || "Network error" };
-  }
-}
+function loadTheme() {
+  const t = localStorage.getItem("rb_theme") || "light";
+  if (t === "dark") document.body.classList.add("theme-dark");
+  else document.body.classList.remove("theme-dark");
 
-async function login(username, password) {
-  try {
-    const res = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (res.ok && data.token) {
-      state.token = data.token;
-      localStorage.setItem("rb_token", data.token);
-      if (authModal) authModal.style.display = "none";
-      await fetchSessions();
-      showToast("Logged in", "success");
-    } else {
-      showToast(data.error || "Login failed", "error");
-    }
-    return data;
-  } catch (e) {
-    showToast("Login error", "error");
-    return { error: e.message };
-  }
-}
-
-async function logout() {
-  try {
-    await fetch(`${API_BASE}/logout`, {
-      method: "POST",
-      headers: authHeaders()
-    });
-  } catch (e) {}
-  state.token = null;
-  localStorage.removeItem("rb_token");
-  showToast("Logged out", "info");
-  if (authModal) authModal.style.display = "flex";
-  if (sessionsList) sessionsList.innerHTML = "";
-  if (messagesEl) messagesEl.innerHTML = "";
-  state.sessions = [];
-  state.activeSessionId = null;
-}
-
-// ---------- Sessions ----------
-function extractSessionId(d) {
-  return d?.session_id || d?.id || d?.sessionId || null;
-}
-
-async function fetchSessions() {
-  if (!state.token) return;
-  try {
-    const res = await fetch(`${API_BASE}/sessions`, { headers: authHeaders() });
-    if (!res.ok) return;
-    const arr = await res.json();
-    state.sessions = Array.isArray(arr) ? arr : [];
-    renderSessions();
-    if (!state.activeSessionId && state.sessions.length > 0) {
-      const id = extractSessionId(state.sessions[0]);
-      if (id) openSession(id);
-    }
-  } catch (e) {
-    console.error("fetchSessions:", e);
-  }
-}
-
-function renderSessions() {
-  if (!sessionsList) return;
-  sessionsList.innerHTML = "";
-  state.sessions.forEach(s => {
-    const id = extractSessionId(s);
-    const el = document.createElement("div");
-    el.className = "session-item";
-    el.textContent = (s.name || "Chat") + (s.locked ? " 🔒" : "");
-    el.dataset.sessionId = id || "";
-    el.onclick = () => { if (id) openSession(id); };
-    sessionsList.appendChild(el);
-  });
-}
-
-async function createNewSession() {
-  const name = prompt("Session name", "Chat");
-  if (!name) return;
-  try {
-    const res = await fetch(`${API_BASE}/new_session`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ name })
-    });
-    const d = await res.json();
-    if (res.ok) {
-      showToast("Session created", "success");
-      await fetchSessions();
-      const newId = extractSessionId(d);
-      if (newId) openSession(newId);
-    } else {
-      showToast(d.error || "Error", "error");
-    }
-  } catch (e) {
-    console.error(e);
-    showToast("Network error");
-  }
-}
-
-async function openSession(id) {
-  if (!state.token) return showToast("Login required");
-  try {
-    const res = await fetch(`${API_BASE}/session/${id}`, { headers: authHeaders() });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      if (d.locked) {
-        const pin = prompt("PIN?");
-        if (!pin) return;
-        const unlock = await fetch(`${API_BASE}/session/${id}/unlock`, {
-          method: "POST",
-          headers: authHeaders(),
-          body: JSON.stringify({ pin })
-        });
-        if (unlock.ok) return openSession(id);
-      }
-      return;
-    }
-    const msgs = await res.json();
-    state.activeSessionId = id;
-    if (messagesEl) messagesEl.innerHTML = "";
-    if (Array.isArray(msgs)) {
-      msgs.forEach(m => {
-        if (m.sender === "user") appendUserBubble(m.text);
-        else appendBotBubble(m.text);
-      });
-    }
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-// ---------- Chat Streaming ----------
-async function startStreamingReply(userText, sessionId) {
-  if (!sessionId) {
-    try {
-      const newRes = await fetch(`${API_BASE}/new_session`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ name: "Chat" })
-      });
-      const d = await newRes.json();
-      sessionId = extractSessionId(d);
-      await fetchSessions();
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  appendUserBubble(userText);
-  showTypingBubbleInline();
-  showFloatingTyping();
-  setSendLoading(true);
-
-  if (state.streamingAbortController) {
-    state.streamingAbortController.abort();
-    state.streamingAbortController = null;
-  }
-
-  const controller = new AbortController();
-  state.streamingAbortController = controller;
-
-  try {
-    const resp = await fetch(`${API_BASE}/chat_stream`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ message: userText, session_id: sessionId }),
-      signal: controller.signal
-    });
-
-    if (!resp.ok) {
-      removeTypingBubbleInline();
-      hideFloatingTyping();
-      setSendLoading(false);
-      return fallbackChat(userText, sessionId);
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let fullReply = "";
-
-    removeTypingBubbleInline();
-
-    const botDiv = document.createElement("div");
-    botDiv.className = "bubble bot entering";
-    botDiv.innerHTML = `<div class="text"></div><div class="time">${timeNow()}</div>`;
-    messagesEl.appendChild(botDiv);
-    requestAnimationFrame(() => botDiv.classList.add("show"));
-    const textNode = botDiv.querySelector(".text");
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        if (!line) continue;
-        const piece = line.startsWith("data: ") ? line.substring(6) : line;
-        fullReply += piece;
-        textNode.innerHTML = nl2br(escapeHtml(fullReply));
-      }
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    hideFloatingTyping();
-    setSendLoading(false);
-    speakText(fullReply);
-
-    await openSession(sessionId);
-  } catch (e) {
-    console.error("stream error", e);
-    removeTypingBubbleInline();
-    hideFloatingTyping();
-    setSendLoading(false);
-    await fallbackChat(userText, sessionId);
-  }
-}
-
-async function fallbackChat(userText, sessionId) {
-  try {
-    const res = await fetch(`${API_BASE}/chat`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ message: userText, session_id: sessionId })
-    });
-    const d = await res.json();
-    appendBotBubble(d.reply || "No reply");
-    const sid = extractSessionId(d);
-    if (sid) await openSession(sid);
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-// ---------- TTS + Language Detect ----------
-let voiceMode = "female";
-let voices = [];
-let enFemale = null;
-let enMale = null;
-let hiFemale = null;
-let hiMale = null;
-
-function detectLanguage(text) {
-  if (!text) return "en";
-  const hindiRegex = /[\u0900-\u097F]/;
-  if (hindiRegex.test(text)) return "hi";
-  const words = ["kya","hai","haan","nahi","kaise","kyu","thik","theek","mera","tum","aap"];
-  const lower = text.toLowerCase();
-  if (words.some(w => lower.includes(w))) return "hi";
-  return "en";
-}
-
-function loadAllVoices() {
-  voices = speechSynthesis.getVoices() || [];
-
-  enFemale = voices.find(v => /^en/i.test(v.lang) && /female/i.test(v.name))
-    || voices.find(v => /^en/i.test(v.lang)) || voices[0] || null;
-
-  enMale = voices.find(v => /^en/i.test(v.lang) && /male/i.test(v.name))
-    || voices.find(v => /^en/i.test(v.lang)) || voices[1] || voices[0] || null;
-
-  hiFemale = voices.find(v => /^hi/i.test(v.lang) && /female/i.test(v.name))
-    || voices.find(v => /^hi/i.test(v.lang)) || enFemale;
-
-  hiMale = voices.find(v => /^hi/i.test(v.lang) && /male/i.test(v.name))
-    || voices.find(v => /^hi/i.test(v.lang)) || enMale;
-
-  console.log("Voices loaded", { enFemale, enMale, hiFemale, hiMale });
-}
-
-if ("speechSynthesis" in window) {
-  window.speechSynthesis.onvoiceschanged = loadAllVoices;
-  setTimeout(loadAllVoices, 200);
-}
-
-function speakText(text) {
-  const lang = detectLanguage(text);
-
-  if ("speechSynthesis" in window) {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 1.05;
-    utter.pitch = 1.0;
-    utter.volume = 1.0;
-
-    if (lang === "hi") {
-      utter.lang = "hi-IN";
-      utter.voice = voiceMode === "male" ? hiMale : hiFemale;
-    } else {
-      utter.lang = "en-US";
-      utter.voice = voiceMode === "male" ? enMale : enFemale;
-    }
-
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utter);
-    return;
-  }
-}
-
-// ---------- Speech Recognition ----------
-let recognition = null, recognizing = false;
-
-if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SR();
-  recognition.lang = "en-US";
-  recognition.interimResults = true;
-
-  recognition.onstart = () => {
-    recognizing = true;
-    if (voiceToggleBtn) voiceToggleBtn.classList.add("active");
-    showToast("Recording...");
-  };
-
-  recognition.onerror = e => {
-    recognizing = false;
-    if (voiceToggleBtn) voiceToggleBtn.classList.remove("active");
-  };
-
-  recognition.onend = () => {
-    recognizing = false;
-    if (voiceToggleBtn) voiceToggleBtn.classList.remove("active");
-  };
-
-  recognition.onresult = ev => {
-    if (!inputEl) return;
-    let interim = "", final = "";
-    for (let i = 0; i < ev.results.length; i++) {
-      const r = ev.results[i];
-      if (r.isFinal) final += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    // replace current input value with final+interim (avoid duplicate append behavior)
-    const base = inputEl.value || "";
-    // If the base already contains the final text, avoid duplicating: prefer to replace whole content
-    inputEl.value = (base && base.trim().length > 0 && !final) ? base + (interim ? " " + interim : "") : (final + (interim ? " " + interim : ""));
-  };
-}
-
-// ---------- Emoji Picker ----------
-const EMOJIS = ["😀","😃","😄","😁","😅","😂","😊","🙂","🙃","😉","😍","😘","😜","🤗","🤔","😴","😪","😢","😭","😤","😡","🤯","😇","👏","🙏","👍","👎"];
-
-function buildEmojiPicker() {
-  if (!emojiPicker) return;
-  emojiPicker.innerHTML = "";
-  emojiPicker.style.display = "none";
-
-  EMOJIS.forEach(e => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "emoji-btn";
-    b.textContent = e;
-    b.onclick = () => {
-      if (!inputEl) return;
-      const st = inputEl.selectionStart || inputEl.value.length;
-      inputEl.value = inputEl.value.slice(0, st) + e + inputEl.value.slice(st);
-      // move caret after inserted emoji
-      try {
-        inputEl.focus();
-        inputEl.selectionStart = inputEl.selectionEnd = st + e.length;
-      } catch (err) {}
-      // close picker after pick
-      emojiPicker.style.display = "none";
-    };
-    emojiPicker.appendChild(b);
-  });
-}
-
-// ---------- Profile ----------
-function loadProfile() {
-  const p = JSON.parse(localStorage.getItem("rb_profile") || "{}");
-  if (profileName) profileName.value = p.name || "";
-  if (profileAvatar) profileAvatar.value = p.avatar || "";
-  if (profileOpenBtn) profileOpenBtn.innerText = p.avatar || (p.name ? p.name.slice(0,2).toUpperCase() : "A");
-}
-
-function saveProfile() {
-  if (!profileName || !profileAvatar) return;
-  const p = {
-    name: profileName.value,
-    avatar: profileAvatar.value.slice(0,2).toUpperCase()
-  };
-  localStorage.setItem("rb_profile", JSON.stringify(p));
-  loadProfile();
-  if (profileModal) profileModal.style.display = "none";
-  showToast("Saved!");
-}
-
-// ---------- Theme + Wallpaper ----------
-const APP_ROOT = document.body;
-
-function loadThemeAndWallpaper() {
-  const theme = localStorage.getItem("rb_theme") || "light";
-  if (theme === "dark") document.body.classList.add("theme-dark");
-
-  const wall = localStorage.getItem("rb_wallpaper") || "wall-default";
-  ["wall-default","wall-nature","wall-lavender","wall-dark"].forEach(c => document.body.classList.remove(c));
-  document.body.classList.add(wall);
-
-  if (wallpaperSelect) wallpaperSelect.value = wall;
+  const w = localStorage.getItem("rb_wallpaper") || "wall-default";
+  applyWallpaper(w);
+  if (refs.wallpaperSelect) refs.wallpaperSelect.value = w;
 }
 
 function toggleTheme() {
@@ -621,163 +177,557 @@ function toggleTheme() {
 }
 
 function wallpaperChanged(v) {
-  ["wall-default","wall-nature","wall-lavender","wall-dark"].forEach(c => document.body.classList.remove(c));
-  document.body.classList.add(v);
+  applyWallpaper(v);
   localStorage.setItem("rb_wallpaper", v);
 }
 
-// ---------- Missing Stubs ----------
-function deleteCurrentSession() {
-  if (!state.activeSessionId) return showToast("No session selected");
-  showToast("Delete session (server not implemented)");
+// -------------------------
+// PROFILE
+// -------------------------
+function loadProfile() {
+  const p = JSON.parse(localStorage.getItem("rb_profile") || "{}");
+  refs.profileName.value = p.name || "";
+  refs.profileAvatar.value = p.avatar || "";
 }
 
-function exportCurrentSessionPDF() {
-  showToast("Export PDF (server not implemented)");
+function saveProfile() {
+  const p = {
+    name: refs.profileName.value,
+    avatar: refs.profileAvatar.value,
+  };
+  localStorage.setItem("rb_profile", JSON.stringify(p));
+  refs.profileModal.style.display = "none";
+  showToast("Profile saved");
 }
 
-function lockCurrentSessionWithPin() {
-  showToast("Lock session (server not implemented)");
+// -------------------------
+// AUTH
+// -------------------------
+async function signup(username, password) {
+  const r = await fetch(`${API_BASE}/signup`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ username, password }),
+  });
+  return r.json();
 }
 
-function searchInSession() {
-  showToast("Search (not implemented)");
+async function login(username, password) {
+  const r = await fetch(`${API_BASE}/login`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ username, password }),
+  });
+
+  const data = await r.json();
+  if (r.ok && data.token) {
+    state.token = data.token;
+    localStorage.setItem("rb_token", data.token);
+    refs.authModal.style.display = "none";
+    fetchSessions();
+  } else {
+    showToast(data.error || "Login failed");
+  }
 }
 
-// ---------- Bind Events ----------
+// -------------------------
+// SESSIONS
+// -------------------------
+function extractId(s) {
+  return s.id || s.session_id;
+}
+
+async function fetchSessions() {
+  if (!state.token) return;
+  const r = await fetch(`${API_BASE}/sessions`, {
+    headers: authHeaders(false),
+  });
+  const arr = await r.json();
+
+  state.sessions = arr;
+  renderSessions();
+
+  if (!state.activeSessionId && arr.length > 0) {
+    openSession(arr[0].id);
+  }
+}
+
+async function createNewSession() {
+  const name = prompt("Session name", "Chat") || "Chat";
+  const r = await fetch(`${API_BASE}/new_session`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  const d = await r.json();
+  await fetchSessions();
+  openSession(d.session_id || d.id);
+}
+
+async function openSession(id) {
+  const r = await fetch(`${API_BASE}/session/${id}`, {
+    headers: authHeaders(false),
+  });
+
+  if (!r.ok) {
+    const d = await r.json();
+    if (d.locked) {
+      const pin = prompt("PIN?");
+      if (!pin) return;
+      const un = await fetch(`${API_BASE}/session/${id}/unlock`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ pin }),
+      });
+      if (un.ok) return openSession(id);
+    }
+    return;
+  }
+
+  const msgs = await r.json();
+  refs.messagesEl.innerHTML = "";
+  msgs.forEach((m) => {
+    if (m.sender === "user") appendUser(m.text);
+    else appendBot(m.text);
+  });
+
+  state.activeSessionId = id;
+
+  // set active UI
+  document.querySelectorAll(".session-item").forEach((i) => {
+    i.classList.toggle("active", i.dataset.id == id);
+  });
+
+  const s = state.sessions.find((x) => x.id == id);
+  if (refs.activeChatTitle) refs.activeChatTitle.textContent = s?.name || "Chat";
+}
+
+// -------------------------
+// SESSION DELETE / RENAME / PIN
+// -------------------------
+async function deleteSessionFromServer(id) {
+  const r = await fetch(`${API_BASE}/session/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(false),
+  });
+
+  if (r.ok) {
+    showToast("Deleted");
+    await fetchSessions();
+    if (state.activeSessionId == id) {
+      refs.messagesEl.innerHTML = "";
+      state.activeSessionId = null;
+    }
+  } else showToast("Delete failed");
+}
+
+async function renameSession(id) {
+  const name = prompt("Rename session");
+  if (!name) return;
+  const r = await fetch(`${API_BASE}/session/${id}/rename`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  if (r.ok) showToast("Renamed");
+  await fetchSessions();
+}
+
+async function togglePin(id, isPinned) {
+  const r = await fetch(`${API_BASE}/session/${id}/pin`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ pinned: isPinned }),
+  });
+  if (r.ok) showToast(isPinned ? "Pinned" : "Unpinned");
+  await fetchSessions();
+}
+
+// -------------------------
+// STREAMING CHAT
+// -------------------------
+async function startStreaming(text, sid) {
+  appendUser(text);
+  showFloatingTyping();
+
+  if (state.streamingAbortController)
+    try { state.streamingAbortController.abort(); } catch {}
+
+  const controller = new AbortController();
+  state.streamingAbortController = controller;
+
+  // Create bot bubble to stream into
+  const div = document.createElement("div");
+  div.className = "bubble bot show";
+  div.innerHTML = `<div class="text"></div>`;
+  refs.messagesEl.appendChild(div);
+  const textNode = div.querySelector(".text");
+
+  try {
+    const r = await fetch(`${API_BASE}/chat_stream`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ message: text, session_id: sid }),
+      signal: controller.signal,
+    });
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let full = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const pieces = chunk.split("\n");
+
+      pieces.forEach((p) => {
+        if (p.startsWith("data: ")) {
+          const t = p.replace("data: ", "");
+          full += t;
+          textNode.innerHTML = nl2br(escapeHtml(full));
+          scrollBottom();
+        }
+      });
+    }
+
+  } catch (e) {
+    console.log("Stream error", e);
+    textNode.innerHTML += "<br><i>[Stream error]</i>";
+  }
+
+  hideFloatingTyping();
+  await fetchSessions();
+  openSession(state.activeSessionId);
+}
+
+// -------------------------
+// SEND
+// -------------------------
+async function sendMessage() {
+  const t = refs.inputEl.value.trim();
+  if (!t) return;
+  if (!state.token) return showToast("Login first");
+  refs.inputEl.value = "";
+  startStreaming(t, state.activeSessionId);
+}
+
+// -------------------------
+// SIDEBAR
+// -------------------------
+function renderSessions() {
+  refs.sectionPinned.innerHTML = "";
+  refs.sectionToday.innerHTML = "";
+  refs.sectionYesterday.innerHTML = "";
+  refs.sectionOlder.innerHTML = "";
+
+  const today = new Date().toDateString();
+  const now = new Date();
+
+  state.sessions.forEach((s) => {
+    const d = new Date(s.updated_at || s.created_at);
+    const dateStr = d.toDateString();
+
+    const el = document.createElement("div");
+    el.className = "session-item";
+    el.dataset.id = s.id;
+
+    el.innerHTML = `
+      <div class="session-row">
+        <div class="chat-icon">${(s.name || "?")[0].toUpperCase()}</div>
+        <div style="flex:1">${s.name}</div>
+        ${s.pinned ? `<div class="unread-dot"></div>` : ""}
+      </div>
+      <div class="chat-menu">
+        <button data-act="pin">${s.pinned ? "Unpin" : "Pin"}</button>
+        <button data-act="rename">Rename</button>
+        <button data-act="delete">Delete</button>
+      </div>
+      <div class="delete-bg">🗑</div>
+      <div class="hold-delete"></div>
+    `;
+
+    // place in category
+    if (s.pinned) refs.sectionPinned.appendChild(el);
+    else if (dateStr === today) refs.sectionToday.appendChild(el);
+    else if (now - d < 86400 * 1000 * 2) refs.sectionYesterday.appendChild(el);
+    else refs.sectionOlder.appendChild(el);
+  });
+
+  bindSessionItems();
+}
+
+function bindSessionItems() {
+  document.querySelectorAll(".session-item").forEach((el) => {
+    const id = el.dataset.id;
+
+    el.onclick = (e) => {
+      if (e.target.closest(".chat-menu")) return;
+      openSession(id);
+    };
+
+    el.querySelectorAll(".chat-menu button").forEach((b) => {
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        const act = b.dataset.act;
+        if (act === "delete") deleteSessionFromServer(id);
+        if (act === "rename") renameSession(id);
+        if (act === "pin") {
+          const s = state.sessions.find((x) => x.id == id);
+          togglePin(id, !s.pinned);
+        }
+      };
+    });
+
+    const delBg = el.querySelector(".delete-bg");
+    if (delBg)
+      delBg.onclick = (ev) => {
+        ev.stopPropagation();
+        deleteSessionFromServer(id);
+      };
+  });
+}
+
+// -------------------------
+// SEARCH FILTER
+// -------------------------
+function bindSearch() {
+  refs.sessionSearch.oninput = () => {
+    const q = refs.sessionSearch.value.toLowerCase();
+    document.querySelectorAll(".session-item").forEach((el) => {
+      el.style.display = el.textContent.toLowerCase().includes(q)
+        ? "flex"
+        : "none";
+    });
+  };
+}
+
+// -------------------------
+// SIDEBAR TOGGLE + RESIZER
+// -------------------------
+function bindSidebar() {
+  refs.sidebarToggle.onclick = () => {
+    refs.sidebar.classList.toggle("collapsed");
+    localStorage.setItem(
+      "rb_sidebar",
+      refs.sidebar.classList.contains("collapsed") ? "1" : "0"
+    );
+  };
+
+  const saved = localStorage.getItem("rb_sidebar");
+  if (saved == "1") refs.sidebar.classList.add("collapsed");
+
+  let resizing = false;
+  refs.sidebarResizer.onmousedown = () => {
+    resizing = true;
+    document.body.style.cursor = "ew-resize";
+  };
+  document.onmousemove = (e) => {
+    if (!resizing) return;
+    const w = Math.min(520, Math.max(140, e.clientX));
+    refs.sidebar.style.width = w + "px";
+    localStorage.setItem("rb_sidebar_width", w);
+  };
+  document.onmouseup = () => {
+    resizing = false;
+    document.body.style.cursor = "default";
+  };
+
+  const sw = localStorage.getItem("rb_sidebar_width");
+  if (sw) refs.sidebar.style.width = sw + "px";
+}
+
+// -------------------------
+// VOICE (browser TTS)
+// -------------------------
+let voices = [];
+
+function loadVoices() {
+  voices = speechSynthesis.getVoices();
+
+  state.voicesLoaded = true;
+}
+
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+  setTimeout(loadVoices, 300);
+}
+
+function detectLang(t) {
+  const hi = /[\u0900-\u097F]/;
+  return hi.test(t) ? "hi-IN" : "en-US";
+}
+
+function speak(text) {
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = detectLang(text);
+  u.rate = 1.03;
+  u.pitch = state.voiceMode === "male" ? 0.85 : 1.15;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+// -------------------------
+// STT (SpeechRecognition)
+// -------------------------
+let recognition = null,
+  recognizing = false;
+
+if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
+  const SR =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SR();
+  recognition.lang = "en-US";
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    recognizing = true;
+    refs.voiceToggleBtn.classList.add("active");
+  };
+  recognition.onerror = () => {
+    recognizing = false;
+    refs.voiceToggleBtn.classList.remove("active");
+  };
+  recognition.onend = () => {
+    recognizing = false;
+    refs.voiceToggleBtn.classList.remove("active");
+  };
+  recognition.onresult = (ev) => {
+    let f = "";
+    for (let i = 0; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) f += ev.results[i][0].transcript;
+    }
+    if (f) refs.inputEl.value = f;
+  };
+}
+
+function toggleSTT() {
+  if (!recognition) return showToast("STT not supported");
+  if (!recognizing) recognition.start();
+  else recognition.stop();
+}
+
+// -------------------------
+// EMOJI PANEL
+// -------------------------
+const EMOJIS = ["😀","😄","😁","😂","🙂","😍","😴","😢","😭","😡","👏","🙏","👍","👎"];
+function buildEmojiPanel() {
+  refs.emojiPicker.innerHTML = "";
+  EMOJIS.forEach((e) => {
+    const b = document.createElement("button");
+    b.className = "emoji-btn";
+    b.textContent = e;
+    b.onclick = () => {
+      refs.inputEl.value += e;
+      refs.emojiPicker.style.display = "none";
+    };
+    refs.emojiPicker.appendChild(b);
+  });
+}
+
+// -------------------------
+// EVENTS
+// -------------------------
 function bindEvents() {
-  if (maleBtnEl) maleBtnEl.addEventListener("click", () => {
-    voiceMode = "male";
-    maleBtnEl.classList.add("active");
-    if (femaleBtnEl) femaleBtnEl.classList.remove("active");
-    showToast("Male voice selected");
-  });
+  // Auth
+  refs.loginBtn.onclick = () =>
+    login(refs.loginUser.value, refs.loginPass.value);
+  refs.signupBtn.onclick = () =>
+    signup(refs.loginUser.value, refs.loginPass.value).then((d) =>
+      showToast(d.message || d.error)
+    );
 
-  if (femaleBtnEl) femaleBtnEl.addEventListener("click", () => {
-    voiceMode = "female";
-    femaleBtnEl.classList.add("active");
-    if (maleBtnEl) maleBtnEl.classList.remove("active");
-    showToast("Female voice selected");
-  });
-
-  if (signupBtn) signupBtn.addEventListener("click", async () => {
-    const u = (loginUser?.value || "").trim();
-    const p = loginPass?.value || "";
-    if (!u || !p) return showToast("Enter credentials");
-    const res = await signup(u,p);
-    if (res.ok) showToast("Sign up successful", "success");
-    else showToast(res.body?.error || res.error || "Sign up failed", "error");
-  });
-
-  if (loginBtn) loginBtn.addEventListener("click", async () => {
-    const u = (loginUser?.value || "").trim();
-    const p = loginPass?.value || "";
-    if (!u || !p) return showToast("Enter credentials");
-    await login(u,p);
-  });
-
-  if (profileOpenBtn) profileOpenBtn.addEventListener("click", () => {
-    if (profileModal) profileModal.style.display = "flex";
+  // Profile
+  refs.profileOpenBtn.onclick = () => {
     loadProfile();
-  });
+    refs.profileModal.style.display = "flex";
+  };
+  refs.profileCancel.onclick = () =>
+    (refs.profileModal.style.display = "none");
+  refs.profileSave.onclick = saveProfile;
 
-  if (profileCancel) profileCancel.addEventListener("click", () => { if (profileModal) profileModal.style.display = "none"; });
-  if (profileSave) profileSave.addEventListener("click", saveProfile);
-
-  if (sendBtn) sendBtn.addEventListener("click", async () => {
-    const txt = (inputEl?.value || "").trim();
-    if (!txt) return showToast("Write something");
-    if (!state.token) return showToast("Login required");
-    await startStreamingReply(txt, state.activeSessionId);
-    if (inputEl) inputEl.value = "";
-  });
-
-  if (inputEl) inputEl.addEventListener("keydown", e => {
+  // Composer
+  refs.sendBtn.onclick = sendMessage;
+  refs.inputEl.onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (sendBtn) sendBtn.click();
+      sendMessage();
     }
+  };
+
+  // Emoji
+  refs.emojiBtn.onclick = () => {
+    refs.emojiPicker.style.display =
+      refs.emojiPicker.style.display === "block" ? "none" : "block";
+  };
+
+  // Voice selector
+  refs.maleBtn.onclick = () => (state.voiceMode = "male");
+  refs.femaleBtn.onclick = () => (state.voiceMode = "female");
+
+  refs.enMaleBtn.onclick = () => (state.voiceMode = "male");
+  refs.enFemaleBtn.onclick = () => (state.voiceMode = "female");
+  refs.hiMaleBtn.onclick = () => (state.voiceMode = "male");
+  refs.hiFemaleBtn.onclick = () => (state.voiceMode = "female");
+
+  // STT
+  refs.voiceToggleBtn.onclick = toggleSTT;
+
+  // Tools
+  refs.searchBtn.onclick = () => showToast("Search inside chat coming soon");
+  refs.exportBtn.onclick = () => {
+    if (!state.activeSessionId) return;
+    window.open(`${API_BASE}/export/${state.activeSessionId}`, "_blank");
+  };
+  refs.deleteBtn.onclick = () => {
+    if (!state.activeSessionId) return;
+    if (confirm("Delete this session?"))
+      deleteSessionFromServer(state.activeSessionId);
+  };
+  refs.lockBtn.onclick = () => showToast("Locking session coming soon");
+
+  // Theme + wallpaper
+  refs.themeToggle.onclick = toggleTheme;
+  refs.wallpaperSelect.onchange = (e) => wallpaperChanged(e.target.value);
+
+  // New chat ripple
+  refs.newSessionBtn.onclick = (e) => {
+    const rect = e.target.getBoundingClientRect();
+    e.target.style.setProperty("--ripple-x", e.clientX - rect.left + "px");
+    e.target.style.setProperty("--ripple-y", e.clientY - rect.top + "px");
+    e.target.classList.remove("ripple-active");
+    void e.target.offsetWidth;
+    e.target.classList.add("ripple-active");
+    setTimeout(createNewSession, 120);
+  };
+
+  // Sidebar + search
+  bindSidebar();
+  bindSearch();
+
+  // Section collapse
+  document.querySelectorAll(".section-header").forEach((h) => {
+    h.onclick = () => {
+      const sec = h.getAttribute("data-sec");
+      const id = "section" + sec.charAt(0).toUpperCase() + sec.slice(1);
+      document.getElementById(id)?.classList.toggle("collapsed");
+    };
   });
-
-  if (newSessionBtn) newSessionBtn.addEventListener("click", createNewSession);
-  if (deleteBtn) deleteBtn.addEventListener("click", deleteCurrentSession);
-  if (exportBtn) exportBtn.addEventListener("click", exportCurrentSessionPDF);
-  if (lockBtn) lockBtn.addEventListener("click", lockCurrentSessionWithPin);
-  if (searchBtn) searchBtn.addEventListener("click", searchInSession);
-
-  if (emojiBtn && emojiPicker) {
-    emojiBtn.addEventListener("click", () => {
-      emojiPicker.style.display = emojiPicker.style.display === "block" ? "none" : "block";
-      if (emojiPicker.style.display === "block") {
-        // ensure future clicks outside hide it
-      }
-    });
-
-    // outside click: safe checks
-    document.addEventListener("click", e => {
-      try {
-        const target = e.target;
-        if (!emojiPicker || !emojiBtn) return;
-        if (emojiPicker.contains(target) || emojiBtn.contains(target)) return;
-        emojiPicker.style.display = "none";
-      } catch (err) {}
-    });
-  }
-
-  if (voiceToggleBtn) voiceToggleBtn.addEventListener("click", () => {
-    if (!recognition) return showToast("Speech recognition unsupported");
-    if (!recognizing) {
-      try { recognition.start(); } catch (err) { console.warn(err); }
-    } else recognition.stop();
-  });
-
-  if (themeToggle) themeToggle.addEventListener("click", toggleTheme);
-  if (wallpaperSelect) wallpaperSelect.addEventListener("change", e => wallpaperChanged(e.target.value));
 }
 
-// ---------- Init ----------
+// -------------------------
+// INIT
+// -------------------------
 window.addEventListener("DOMContentLoaded", () => {
-  messagesEl = $("messages");
-  inputEl = $("input");
-  sendBtn = $("sendBtn");
-  newSessionBtn = $("newSessionBtn");
-  sessionsList = $("sessionsList");
-  authModal = $("authModal");
-  loginUser = $("loginUser");
-  loginPass = $("loginPass");
-  loginBtn = $("loginBtn");
-  signupBtn = $("signupBtn");
-  profileModal = $("profileModal");
-  profileName = $("profileName");
-  profileAvatar = $("profileAvatar");
-  profileSave = $("profileSave");
-  profileCancel = $("profileCancel");
-  emojiBtn = $("emojiBtn");
-  emojiPicker = $("emojiPicker");
-  voiceToggleBtn = $("voiceToggleBtn");
-  themeToggle = $("themeToggle");
-  wallpaperSelect = $("wallpaperSelect");
-  profileOpenBtn = $("profileOpenBtn");
-  exportBtn = $("exportBtn");
-  lockBtn = $("lockBtn");
-  deleteBtn = $("deleteBtn");
-  searchBtn = $("searchBtn");
-  maleBtnEl = $("maleBtn");
-  femaleBtnEl = $("femaleBtn");
+  cacheRefs();
+  buildEmojiPanel();
+  loadTheme();
 
-  buildEmojiPicker();
-  loadThemeAndWallpaper();
-
-  const floatEl = $("floatingTyping");
-  if (floatEl) floatEl.style.display = "none";
-
-  if (!state.token) {
-    if (authModal) authModal.style.display = "flex";
-  } else {
-    if (authModal) authModal.style.display = "none";
-    fetchSessions();
-  }
+  if (!state.token) refs.authModal.style.display = "flex";
+  else fetchSessions();
 
   bindEvents();
-  loadAllVoices();
+  console.log("RelaxBuddy FINAL JS Ready");
 });

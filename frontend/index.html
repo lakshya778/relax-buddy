@@ -6,7 +6,8 @@
   <title>RelaxBuddy – AI Emotional Support</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+
+<body class="wall-default">
 
 <!-- AUTH MODAL -->
 <div id="authModal" class="auth-modal">
@@ -22,9 +23,9 @@
 </div>
 
 <!-- PROFILE MODAL -->
-<div id="profileModal" class="modal-overlay" style="display:none;">
+<div id="profileModal" class="modal-overlay">
   <div class="modal">
-    <h2>Profile</h2>
+    <h2>Profile Settings</h2>
 
     <label>Display Name</label>
     <input id="profileName" type="text" placeholder="Your name" />
@@ -44,9 +45,47 @@
   <aside class="sidebar">
     <h2 class="logo">RelaxBuddy</h2>
 
-    <button id="newSessionBtn" class="btn-primary" style="width:100%;">+ New Chat</button>
+    <!-- New Chat -->
+    <button id="newSessionBtn" class="newchat-anim btn-primary">+ New Chat</button>
 
-    <div id="sessionsList" class="sessions-list"></div>
+    <!-- Search -->
+    <input id="sessionSearch" class="session-search" type="text" placeholder="Search chats..." />
+
+    <!-- Sections -->
+    <div class="sidebar-sections">
+
+      <div class="section">
+        <div class="section-header" data-sec="pinned">
+          📌 Pinned <span class="section-badge">0</span>
+        </div>
+        <div id="sectionPinned" class="section-body"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header" data-sec="today">
+          🟢 Today <span class="section-badge">0</span>
+        </div>
+        <div id="sectionToday" class="section-body"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header" data-sec="yesterday">
+          🟡 Yesterday <span class="section-badge">0</span>
+        </div>
+        <div id="sectionYesterday" class="section-body"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header" data-sec="older">
+          📘 Older <span class="section-badge">0</span>
+        </div>
+        <div id="sectionOlder" class="section-body"></div>
+      </div>
+
+    </div>
+
+    <!-- Resizer -->
+    <div class="sidebar-resizer"></div>
   </aside>
 
   <!-- CHAT AREA -->
@@ -54,11 +93,16 @@
 
     <!-- HEADER -->
     <div class="chat-header">
-      <h3 id="activeChatTitle">Chat</h3>
 
+      <!-- Sidebar toggle -->
+      <button id="sidebarToggle" class="icon-btn">☰</button>
+
+      <h3 id="activeChatTitle">Online</h3>
+
+      <!-- Tools -->
       <div class="chat-tools">
 
-        <!-- 4 VOICE BUTTONS (EN + HI) -->
+        <!-- Voice selector -->
         <div class="voice-selector">
           <button id="enMaleBtn" class="vs-btn">EN Male</button>
           <button id="enFemaleBtn" class="vs-btn">EN Female</button>
@@ -66,7 +110,7 @@
           <button id="hiFemaleBtn" class="vs-btn">HI Female</button>
         </div>
 
-        <!-- Auto male/female (used by JS) -->
+        <!-- Auto voice -->
         <button id="maleBtn" class="icon-btn">👨</button>
         <button id="femaleBtn" class="icon-btn">👩</button>
 
@@ -95,29 +139,28 @@
 
         <!-- Profile -->
         <button id="profileOpenBtn" class="icon-btn">👤</button>
-
       </div>
     </div>
 
     <!-- Emoji Picker -->
-    <div id="emojiPicker" class="emoji-picker" style="display:none;"></div>
+    <div id="emojiPicker" class="emoji-picker"></div>
 
     <!-- Messages -->
     <div id="messages" class="messages"></div>
 
-    <!-- FLOATING TYPING (exists in HTML for JS to toggle) -->
-    <div id="floatingTyping" class="floating-typing" style="display:none;">
+    <!-- Floating typing -->
+    <div id="floatingTyping" class="floating-typing">
       <div class="typing-bubble">
-        <div class="loading-waves">
+        <div class="typing">
           <span></span><span></span><span></span>
         </div>
       </div>
     </div>
 
-    <!-- COMPOSER -->
+    <!-- Composer -->
     <div class="composer">
       <textarea id="input" placeholder="Type your message..." rows="1"></textarea>
-      <button id="sendBtn" class="btn-primary send-btn">Send</button>
+      <button id="sendBtn" class="send-btn btn-primary">Send</button>
     </div>
 
   </main>

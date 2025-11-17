@@ -1,4 +1,4 @@
-# app.py
+# final app.py — RelaxBuddy (Patched, RESTful + DB migrations)
 import os
 import sqlite3
 import secrets
@@ -6,42 +6,51 @@ import bcrypt
 import io
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, request, jsonify, send_file, g
+from flask import Flask, request, jsonify, send_file, g, Response
 from flask_cors import CORS
-from flask import Response, stream_with_context
 
-from prompts import SYSTEM_PROMPT
+# Optional model + TTS libs (if not used you can safely comment out)
+try:
+    from prompts import SYSTEM_PROMPT
+except Exception:
+    SYSTEM_PROMPT = "You are RelaxBuddy — a supportive, non-clinical assistant. Keep replies concise and empathetic."
 
-from dotenv import load_dotenv
-from groq import Groq
-from reportlab.pdfgen import canvas
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+# If you use Groq, keep this — else mock or adapt call_groq_compound
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME", "groq/compound")
+try:
+    from groq import Groq
+    client = Groq(api_key=GROQ_API_KEY, default_headers={"Groq-Model-Version": "latest"})
+except Exception:
+    client = None
+
+# TTS & ffmpeg usage
+try:
+    from gtts import gTTS
+except Exception:
+    gTTS = None
 import subprocess
-from gtts import gTTS
-from flask import send_file
-from flask import send_file, jsonify
-
-# load env
-load_dotenv()
-MODEL_NAME = "groq/compound"
 
 # ---------------------------
 # Config
 # ---------------------------
-DB_PATH = "relaxbuddy.db"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL_NAME = "groq/compound"
-TOKEN_TTL_DAYS = 30
+DB_PATH = os.getenv("RB_DB_PATH", "relaxbuddy.db")
+TOKEN_TTL_DAYS = int(os.getenv("RB_TOKEN_TTL_DAYS", "30"))
 
 # ---------------------------
-# Flask + Groq clients
+# Flask
 # ---------------------------
 app = Flask(__name__)
 CORS(app)
 
-client = Groq(api_key=GROQ_API_KEY, default_headers={"Groq-Model-Version": "latest"})
-
 # ---------------------------
-# DB initialization
+# DB helpers + migrations
 # ---------------------------
 def get_db():
     db = getattr(g, "_database", None)
@@ -49,6 +58,15 @@ def get_db():
         db = g._database = sqlite3.connect(DB_PATH, check_same_thread=False)
         db.row_factory = sqlite3.Row
     return db
+
+def ensure_column(table, column, definition):
+    """Add column if missing (simple sqlite ALTER)."""
+    db = get_db()
+    cur = db.execute(f"PRAGMA table_info({table});").fetchall()
+    cols = [c["name"] for c in cur]
+    if column not in cols:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
+        db.commit()
 
 def init_db():
     db = get_db()
@@ -65,7 +83,7 @@ def init_db():
             created_at TEXT
         );
     """)
-    # sessions (chat sessions)
+    # sessions
     c.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,13 +108,17 @@ def init_db():
     """)
     db.commit()
 
+    # Migrate: add updated_at and pinned if they don't exist
+    ensure_column("sessions", "updated_at", "TEXT")
+    ensure_column("sessions", "pinned", "INTEGER DEFAULT 0")
+
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, "_database", None)
     if db is not None:
         db.close()
 
-# boot db
+# initialize DB + migrations
 with app.app_context():
     init_db()
 
@@ -107,24 +129,37 @@ def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
 
 def check_password(password: str, pw_hash: bytes) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), pw_hash)
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), pw_hash)
+    except Exception:
+        return False
 
 def hash_pin(pin: str) -> bytes:
     return bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt())
 
 def check_pin(pin: str, pin_hash: bytes) -> bool:
-    return bcrypt.checkpw(pin.encode("utf-8"), pin_hash)
+    try:
+        return bcrypt.checkpw(pin.encode("utf-8"), pin_hash)
+    except Exception:
+        return False
 
 def generate_token():
     return secrets.token_hex(32)
+
+def now_iso():
+    return datetime.utcnow().isoformat()
+
+def now_time_str():
+    return datetime.utcnow().strftime("%H:%M")
 
 def get_user_by_token(token):
     if not token:
         return None
     db = get_db()
+    # token_expiry stored as ISO string — simple comparison works for same format
     row = db.execute(
         "SELECT * FROM users WHERE token = ? AND token_expiry > ?",
-        (token, datetime.utcnow().isoformat()),
+        (token, now_iso()),
     ).fetchone()
     return row
 
@@ -138,7 +173,6 @@ def require_auth(fn):
         user = get_user_by_token(token)
         if not user:
             return jsonify({"error": "Authentication required"}), 401
-        # attach user to request context
         request.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -153,7 +187,7 @@ def require_admin(fn):
     return wrapper
 
 # ---------------------------
-# Auth endpoints: signup/login/logout
+# Auth endpoints
 # ---------------------------
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -166,7 +200,7 @@ def signup():
     db = get_db()
     try:
         pw_hash = hash_password(password)
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         db.execute(
             "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
             (username, pw_hash, now),
@@ -206,69 +240,73 @@ def logout():
     db.execute("UPDATE users SET token = NULL, token_expiry = NULL WHERE id = ?", (user["id"],))
     db.commit()
     return jsonify({"ok": True})
-# ---------------------------
-#Voice generation
-# ---------------------------
 
+# ---------------------------
+# TTS endpoints (simple wrappers)
+# ---------------------------
 @app.route("/tts_female", methods=["POST"])
 def tts_female():
-    data = request.get_json()
+    data = request.get_json() or {}
     text = data.get("text", "")
-
-    base = generate_tts(text)      # original female-ish
-    return send_file(base, mimetype="audio/mpeg")
-
+    if not text:
+        return jsonify({"error":"text required"}), 400
+    if gTTS is None:
+        return jsonify({"error":"gTTS not available on server"}), 500
+    buf = io.BytesIO()
+    try:
+        tts = gTTS(text=text, lang="hi")
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        return send_file(buf, mimetype="audio/mpeg")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/tts_male", methods=["POST"])
 def tts_male():
-    data = request.get_json()
+    data = request.get_json() or {}
     text = data.get("text", "")
-
-    base = generate_tts(text)
-    shifted = ffmpeg_pitch_shift(base, -4)   # lower pitch for male voice
-
-    return send_file(shifted, mimetype="audio/mpeg")
-
-
-def generate_tts(text):
-    buf = io.BytesIO()
-    tts = gTTS(text=text, lang="hi")
-    tts.write_to_fp(buf)
-    buf.seek(0)
-    return buf
-
-def ffmpeg_pitch_shift(input_bytes, semitone_shift):
-    input_buf = io.BytesIO(input_bytes.getvalue())
-
-    process = subprocess.Popen(
-        [
-            "ffmpeg",
-            "-i", "pipe:0",
-            "-af", f"asetrate=44100*{2**(semitone_shift/12)},aresample=44100",
-            "-f", "mp3",
-            "pipe:1"
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    out, err = process.communicate(input_buf.read())
-    return io.BytesIO(out)
+    if not text:
+        return jsonify({"error":"text required"}), 400
+    if gTTS is None:
+        return jsonify({"error":"gTTS not available on server"}), 500
+    try:
+        base_buf = io.BytesIO()
+        tts = gTTS(text=text, lang="hi")
+        tts.write_to_fp(base_buf)
+        base_buf.seek(0)
+        # lower pitch via ffmpeg (ensure ffmpeg installed)
+        process = subprocess.Popen(
+            [
+                "ffmpeg", "-i", "pipe:0",
+                "-af", "asetrate=44100*0.9,aresample=44100", # gentle shift
+                "-f", "mp3", "pipe:1"
+            ],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        out, err = process.communicate(base_buf.read())
+        return send_file(io.BytesIO(out), mimetype="audio/mpeg")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ---------------------------
-# Session and message helpers
+# Session & message helpers
 # ---------------------------
 def create_session_db(user_id=None, name="Chat"):
     db = get_db()
-    now = datetime.utcnow().isoformat()
-    cur = db.execute("INSERT INTO sessions (user_id, name, created_at) VALUES (?,?,?)", (user_id, name, now))
+    now = now_iso()
+    cur = db.execute(
+        "INSERT INTO sessions (user_id, name, created_at, updated_at) VALUES (?,?,?,?)",
+        (user_id, name, now, now)
+    )
     db.commit()
     return cur.lastrowid
 
 def save_message_db(session_id, sender, text):
     db = get_db()
-    now = datetime.utcnow().strftime("%H:%M")
+    now = now_time_str()
     db.execute("INSERT INTO messages (session_id, sender, text, time) VALUES (?,?,?,?)", (session_id, sender, text, now))
+    # update session updated_at
+    db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now_iso(), session_id))
     db.commit()
 
 def get_session(session_id):
@@ -288,7 +326,6 @@ CRISIS_KEYWORDS = [
     "suicide", "kill myself", "kill me", "end my life", "want to die",
     "self-harm", "cut myself", "hurt myself", "hang myself", "life is meaningless"
 ]
-
 HELPLINES = "India: Aasra 9820466726 | USA: 988 | UK: 116 123"
 
 def detect_crisis(text):
@@ -296,14 +333,17 @@ def detect_crisis(text):
     return any(k in t for k in CRISIS_KEYWORDS)
 
 # ---------------------------
-# Groq call
+# Model (Groq) call (simple wrapper)
 # ---------------------------
 def call_groq_compound(user_message):
+    if client is None:
+        # Model client not configured — return a simple echo for local dev
+        return f"I heard: {user_message}"
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are RelaxBuddy — a supportive, non-clinical assistant. Keep replies concise and empathetic."},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message}
             ],
             temperature=0.7,
@@ -314,23 +354,21 @@ def call_groq_compound(user_message):
         )
         return completion.choices[0].message.content
     except Exception as e:
-        print("GROQ ERROR:", e)
+        app.logger.error("GROQ ERROR: %s", e)
         return None
 
 # ---------------------------
 # API: sessions/messages
 # ---------------------------
-
 @app.route("/sessions", methods=["GET"])
 @require_auth
 def list_sessions():
     user = request.user
     db = get_db()
-    # admins can see all
     if user["is_admin"] == 1:
-        rows = db.execute("SELECT id, name, user_id, created_at, locked FROM sessions ORDER BY id DESC").fetchall()
+        rows = db.execute("SELECT id, name, user_id, created_at, updated_at, locked, pinned FROM sessions ORDER BY COALESCE(updated_at, created_at) DESC").fetchall()
     else:
-        rows = db.execute("SELECT id, name, user_id, created_at, locked FROM sessions WHERE user_id = ? ORDER BY id DESC", (user["id"],)).fetchall()
+        rows = db.execute("SELECT id, name, user_id, created_at, updated_at, locked, pinned FROM sessions WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at) DESC", (user["id"],)).fetchall()
     out = [dict(r) for r in rows]
     return jsonify(out)
 
@@ -341,10 +379,8 @@ def get_session_messages(sid):
     row = get_session(sid)
     if not row:
         return jsonify({"error": "session not found"}), 404
-    # ownership or admin
     if row["user_id"] and row["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error": "forbidden"}), 403
-    # locked?
     if row["locked"] == 1:
         return jsonify({"error": "locked", "locked": True}), 403
     msgs = get_messages_for_session(sid)
@@ -357,8 +393,71 @@ def new_session():
     data = request.get_json() or {}
     name = data.get("name") or "Chat"
     sid = create_session_db(user_id=user["id"], name=name)
-    return jsonify({"session_id": sid})
+    row = get_session(sid)
+    return jsonify({"session_id": sid, "id": sid, "name": row["name"], "created_at": row["created_at"], "updated_at": row["updated_at"]})
 
+# ---------------------------
+# Rename, Pin, Delete endpoints
+# ---------------------------
+@app.route("/session/<int:session_id>/rename", methods=["POST"])
+@require_auth
+def rename_session(session_id):
+    user = request.user
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    session = get_session(session_id)
+    if not session:
+        return jsonify({"error":"not found"}), 404
+    if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
+        return jsonify({"error":"forbidden"}), 403
+    db = get_db()
+    db.execute("UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?", (name, now_iso(), session_id))
+    db.commit()
+    return jsonify({"ok": True, "name": name})
+
+@app.route("/session/<int:session_id>/pin", methods=["POST"])
+@require_auth
+def pin_session(session_id):
+    user = request.user
+    data = request.get_json() or {}
+    pinned = 1 if data.get("pinned") else 0
+    session = get_session(session_id)
+    if not session:
+        return jsonify({"error":"not found"}), 404
+    if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
+        return jsonify({"error":"forbidden"}), 403
+    db = get_db()
+    db.execute("UPDATE sessions SET pinned = ?, updated_at = ? WHERE id = ?", (pinned, now_iso(), session_id))
+    db.commit()
+    return jsonify({"ok": True, "pinned": bool(pinned)})
+
+# RESTful delete (recommended)
+@app.route("/session/<int:session_id>", methods=["DELETE"])
+@require_auth
+def delete_session(session_id):
+    user = request.user
+    session = get_session(session_id)
+    if not session:
+        return jsonify({"error":"not found"}), 404
+    if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
+        return jsonify({"error":"forbidden"}), 403
+    db = get_db()
+    db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+# Backwards-compatible delete route (POST)
+@app.route("/session/<int:session_id>/delete", methods=["POST"])
+@require_auth
+def delete_session_post(session_id):
+    return delete_session(session_id)
+
+# ---------------------------
+# Chat streaming (SSE)
+# ---------------------------
 @app.route("/chat_stream", methods=["POST"])
 @require_auth
 def chat_stream():
@@ -370,7 +469,7 @@ def chat_stream():
     if not msg:
         return jsonify({"error": "Message required"}), 400
 
-    # Create or validate session
+    # create or validate session
     if not session_id:
         session_id = create_session_db(user["id"], "Chat")
 
@@ -378,43 +477,59 @@ def chat_stream():
     if not session:
         return jsonify({"error": "session not found"}), 404
 
-    # SAVE user message (in request context)
+    # ownership check
+    if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
+        return jsonify({"error":"forbidden"}), 403
+
+    # save user message
     save_message_db(session_id, "user", msg)
 
     def generate():
         full_reply = ""
-
         try:
-            stream = client.chat.completions.create(
-                model="groq/compound",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": msg}
-                ],
-                stream=True,
-                compound_custom={"tools": {"enabled_tools": []}},
-                extra_headers={"Groq-Model-Version": "latest"}
-            )
-
-            # STREAM LOOP
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-
-                if delta and delta.content:
-                    piece = delta.content
+            # If Groq client available, stream; else simulate
+            if client:
+                stream = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": msg}
+                    ],
+                    stream=True,
+                    compound_custom={"tools": {"enabled_tools": []}},
+                    extra_headers={"Groq-Model-Version": "latest"}
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        piece = delta.content
+                        full_reply += piece
+                        yield f"data: {piece}\n\n"
+            else:
+                # Local fallback streaming simulation
+                reply = call_groq_compound(msg) or "Sorry, I couldn't respond."
+                for i in range(0, len(reply), 60):
+                    piece = reply[i:i+60]
                     full_reply += piece
                     yield f"data: {piece}\n\n"
-
-            # SAVE Bot message (needs context!)
-            with app.app_context():
-                save_message_db(session_id, "bot", full_reply)
-
         except Exception as e:
-            print("STREAM ERROR:", e)
+            app.logger.error("STREAM ERROR: %s", e)
             yield "data: [Stream error occurred]\n\n"
 
-    return app.response_class(generate(), mimetype="text/event-stream")
+        # save final bot message
+        try:
+            with app.app_context():
+                save_message_db(session_id, "bot", full_reply)
+        except Exception as e:
+            app.logger.error("Error saving bot message: %s", e)
+            # still emit a finishing event for client
+            yield f"data: [Save error]\n\n"
 
+    return Response(generate(), mimetype="text/event-stream")
+
+# ---------------------------
+# Non-stream chat (single response)
+# ---------------------------
 @app.route("/chat", methods=["POST"])
 @require_auth
 def chat():
@@ -425,7 +540,6 @@ def chat():
     if not msg:
         return jsonify({"reply": "Please say something.", "crisis": False}), 400
 
-    # if session missing -> create one
     if not session_id:
         session_id = create_session_db(user_id=user["id"], name="Chat")
 
@@ -433,35 +547,28 @@ def chat():
     if not session:
         return jsonify({"error": "session not found"}), 404
 
-    # ownership check
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error": "forbidden"}), 403
 
-    # locked check
     if session["locked"] == 1:
         return jsonify({"error": "session locked"}, 403)
 
-    # save user msg
     save_message_db(session_id, "user", msg)
 
-    # crisis
     if detect_crisis(msg):
         save_message_db(session_id, "bot", "If you're in danger, please contact emergency services immediately.")
         return jsonify({"reply": "I'm really sorry you're feeling this way. Please contact emergency services.", "crisis": True, "helpline": HELPLINES, "session_id": session_id})
 
-    # call model
     reply = call_groq_compound(msg)
     if reply is None:
-        # model error
         save_message_db(session_id, "bot", "AI error: please retry later.")
         return jsonify({"reply": "AI model error. Please try again later.", "crisis": False, "session_id": session_id})
 
-    # save bot reply
     save_message_db(session_id, "bot", reply)
     return jsonify({"reply": reply, "crisis": False, "session_id": session_id})
 
 # ---------------------------
-# Search messages in a session
+# Search messages
 # ---------------------------
 @app.route("/search", methods=["GET"])
 @require_auth
@@ -476,7 +583,6 @@ def search_messages():
         return jsonify({"error": "session not found"}), 404
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error": "forbidden"}), 403
-
     db = get_db()
     rows = db.execute("SELECT id, sender, text, time FROM messages WHERE session_id = ? AND lower(text) LIKE ? ORDER BY id ASC", (session_id, f"%{q}%")).fetchall()
     out = [{"id": r["id"], "sender": r["sender"], "text": r["text"], "time": r["time"]} for r in rows]
@@ -496,54 +602,59 @@ def export_pdf(session_id):
         return jsonify({"error":"forbidden"}), 403
     msgs = get_messages_for_session(session_id)
 
-    # generate PDF in-memory
     buffer = io.BytesIO()
-    p = canvas.Canvas(buffer)
-    p.setTitle(f"RelaxBuddy_session_{session_id}")
-    y = 800
-    p.setFont("Helvetica-Bold", 14)
-    p.drawString(40, y, f"RelaxBuddy Chat - Session {session_id}")
-    y -= 30
-    p.setFont("Helvetica", 11)
-    for m in msgs:
-        txt = f"[{m['time']}] {m['sender'].upper()}: {m['text']}"
-        # wrap simple
-        lines = []
-        while len(txt) > 90:
-            lines.append(txt[:90])
-            txt = txt[90:]
-        lines.append(txt)
-        for line in lines:
-            if y < 60:
-                p.showPage()
-                y = 800
-            p.drawString(40, y, line)
-            y -= 14
-        y -= 6
-    p.save()
-    buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name=f"relaxbuddy_session_{session_id}.pdf", mimetype="application/pdf")
+    try:
+        from reportlab.pdfgen import canvas
+        p = canvas.Canvas(buffer)
+        p.setTitle(f"RelaxBuddy_session_{session_id}")
+        y = 800
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(40, y, f"RelaxBuddy Chat - Session {session_id}")
+        y -= 30
+        p.setFont("Helvetica", 11)
+        for m in msgs:
+            txt = f"[{m['time']}] {m['sender'].upper()}: {m['text']}"
+            lines = []
+            while len(txt) > 90:
+                lines.append(txt[:90])
+                txt = txt[90:]
+            lines.append(txt)
+            for line in lines:
+                if y < 60:
+                    p.showPage()
+                    y = 800
+                p.drawString(40, y, line)
+                y -= 14
+            y -= 6
+        p.save()
+        buffer.seek(0)
+        return send_file(buffer, as_attachment=True, download_name=f"relaxbuddy_session_{session_id}.pdf", mimetype="application/pdf")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ---------------------------
-# Delete session
+# Admin endpoints
 # ---------------------------
-@app.route("/session/<int:session_id>/delete", methods=["POST"])
+@app.route("/admin/sessions", methods=["GET"])
 @require_auth
-def delete_session(session_id):
-    user = request.user
-    session = get_session(session_id)
-    if not session:
-        return jsonify({"error":"not found"}), 404
-    if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
-        return jsonify({"error":"forbidden"}), 403
+@require_admin
+def admin_list_sessions():
     db = get_db()
-    db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-    db.commit()
-    return jsonify({"ok": True})
+    rows = db.execute("SELECT s.id, s.name, s.user_id, u.username, s.created_at, s.updated_at, s.locked FROM sessions s LEFT JOIN users u ON s.user_id = u.id ORDER BY s.id DESC").fetchall()
+    out = []
+    for r in rows:
+        out.append({"id": r["id"], "name": r["name"], "user_id": r["user_id"], "username": r["username"], "created_at": r["created_at"], "updated_at": r["updated_at"], "locked": r["locked"]})
+    return jsonify(out)
+
+@app.route("/admin/session/<int:sid>/messages", methods=["GET"])
+@require_auth
+@require_admin
+def admin_session_messages(sid):
+    msgs = get_messages_for_session(sid)
+    return jsonify(msgs)
 
 # ---------------------------
-# PIN / Private mode
+# PIN / Private mode (unlock endpoint)
 # ---------------------------
 @app.route("/session/<int:session_id>/set_pin", methods=["POST"])
 @require_auth
@@ -560,7 +671,7 @@ def set_pin(session_id):
         return jsonify({"error":"forbidden"}), 403
     pin_h = hash_pin(pin)
     db = get_db()
-    db.execute("UPDATE sessions SET locked = 1, pin_hash = ? WHERE id = ?", (pin_h, session_id))
+    db.execute("UPDATE sessions SET locked = 1, pin_hash = ?, updated_at = ? WHERE id = ?", (pin_h, now_iso(), session_id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -580,32 +691,11 @@ def unlock_session(session_id):
         return jsonify({"error":"no pin set"}), 400
     if check_pin(pin, pin_hash):
         db = get_db()
-        db.execute("UPDATE sessions SET locked = 0 WHERE id = ?", (session_id,))
+        db.execute("UPDATE sessions SET locked = 0, updated_at = ? WHERE id = ?", (now_iso(), session_id))
         db.commit()
         return jsonify({"ok": True})
     else:
         return jsonify({"error":"invalid pin"}), 403
-
-# ---------------------------
-# Admin endpoints (requires admin token)
-# ---------------------------
-@app.route("/admin/sessions", methods=["GET"])
-@require_auth
-@require_admin
-def admin_list_sessions():
-    db = get_db()
-    rows = db.execute("SELECT s.id, s.name, s.user_id, u.username, s.created_at, s.locked FROM sessions s LEFT JOIN users u ON s.user_id = u.id ORDER BY s.id DESC").fetchall()
-    out = []
-    for r in rows:
-        out.append({"id": r["id"], "name": r["name"], "user_id": r["user_id"], "username": r["username"], "created_at": r["created_at"], "locked": r["locked"]})
-    return jsonify(out)
-
-@app.route("/admin/session/<int:sid>/messages", methods=["GET"])
-@require_auth
-@require_admin
-def admin_session_messages(sid):
-    msgs = get_messages_for_session(sid)
-    return jsonify(msgs)
 
 # ---------------------------
 # Run
