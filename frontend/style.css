@@ -13,11 +13,13 @@ body {
   background: #e8f5fb;
 }
 
-body, .sidebar, .chat-header, .composer {
+body,
+.sidebar,
+.chat-header,
+.composer {
   transition: background 0.25s ease, color 0.25s ease;
 }
 
-/* Layout */
 .layout {
   display: flex;
   height: 100vh;
@@ -34,12 +36,23 @@ body, .sidebar, .chat-header, .composer {
   border-right: 1px solid #d2e4ee;
   overflow-y: auto;
   position: relative;
-  transition: width .25s ease;
+  transition: width 0.25s ease;
 }
 
 .sidebar.collapsed {
   width: 70px;
   overflow: hidden;
+}
+
+/* Hide everything in collapsed mode */
+.sidebar.collapsed .logo,
+.sidebar.collapsed .newchat-anim,
+.sidebar.collapsed .session-search,
+.sidebar.collapsed .sidebar-sections,
+.sidebar.collapsed .chat-menu,
+.sidebar.collapsed .delete-bg,
+.sidebar.collapsed .chat-name {
+  display: none !important;
 }
 
 .logo {
@@ -49,15 +62,7 @@ body, .sidebar, .chat-header, .composer {
   color: #06324a;
 }
 
-/* Hide sections when collapsed */
-.sidebar.collapsed .logo,
-.sidebar.collapsed .newchat-anim,
-.sidebar.collapsed .session-search,
-.sidebar.collapsed .sidebar-sections {
-  display: none !important;
-}
-
-/* New Chat Ripple */
+/* New Chat Button Ripple */
 .newchat-anim {
   width: 100%;
   padding: 10px 14px;
@@ -67,8 +72,8 @@ body, .sidebar, .chat-header, .composer {
   background: #4b9fff;
   color: white;
   font-size: 15px;
-  overflow: hidden;
   position: relative;
+  overflow: hidden;
   --ripple-x: 0;
   --ripple-y: 0;
 }
@@ -81,18 +86,24 @@ body, .sidebar, .chat-header, .composer {
   border-radius: 50%;
   left: var(--ripple-x);
   top: var(--ripple-y);
-  background: rgba(255,255,255,0.8);
+  background: rgba(255, 255, 255, 0.75);
   transform: scale(0);
   opacity: 0;
 }
 
 .newchat-anim.ripple-active::after {
-  animation: rippl3 .45s ease-out;
+  animation: rippleAnim 0.45s ease-out;
 }
 
-@keyframes rippl3 {
-  from { transform: scale(0); opacity: .7; }
-  to   { transform: scale(26); opacity: 0; }
+@keyframes rippleAnim {
+  from {
+    transform: scale(0);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(26);
+    opacity: 0;
+  }
 }
 
 /* Search */
@@ -125,11 +136,11 @@ body, .sidebar, .chat-header, .composer {
   font-weight: 600;
 }
 
-.section-header .section-badge {
+.section-badge {
   padding: 2px 8px;
-  font-size: 12px;
   background: #d9ecf7;
   border-radius: 8px;
+  font-size: 12px;
 }
 
 .section-body {
@@ -137,7 +148,7 @@ body, .sidebar, .chat-header, .composer {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  transition: max-height .25s ease, opacity .25s ease;
+  transition: max-height 0.25s ease, opacity 0.25s ease;
 }
 
 .section-body.collapsed {
@@ -157,7 +168,7 @@ body, .sidebar, .chat-header, .composer {
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: background .25s ease;
+  transition: background 0.25s ease;
 }
 
 .session-item:hover {
@@ -188,6 +199,10 @@ body, .sidebar, .chat-header, .composer {
   flex-shrink: 0;
 }
 
+.chat-name {
+  flex: 1;
+}
+
 .unread-dot {
   width: 10px;
   height: 10px;
@@ -199,6 +214,7 @@ body, .sidebar, .chat-header, .composer {
 .chat-menu {
   display: flex;
   gap: 10px;
+  margin-top: 10px;
 }
 
 .chat-menu button {
@@ -214,11 +230,7 @@ body, .sidebar, .chat-header, .composer {
   background: #d4e9ff;
 }
 
-/* Swipe delete */
-.session-item.swiped {
-  transform: translateX(-70px);
-}
-
+/* Swipe background */
 .delete-bg {
   position: absolute;
   top: 0;
@@ -231,17 +243,6 @@ body, .sidebar, .chat-header, .composer {
   justify-content: center;
   color: white;
   font-size: 22px;
-}
-
-/* Hold-delete bar */
-.hold-delete {
-  height: 4px;
-  width: 0;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  background: #ff4b4b;
-  transition: width .7s linear;
 }
 
 /* ------------------------------------------------------
@@ -263,7 +264,7 @@ body, .sidebar, .chat-header, .composer {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg,#e8f5fb,#f8fcff);
+  background: linear-gradient(135deg, #e8f5fb, #f8fcff);
 }
 
 /* ------------------------------------------------------
@@ -279,21 +280,21 @@ body, .sidebar, .chat-header, .composer {
   backdrop-filter: blur(14px);
 }
 
-/* Buttons */
 .icon-btn {
   padding: 9px;
   border: none;
   border-radius: 8px;
   cursor: pointer;
   background: #eaf3f7;
-  transition: .25s;
+  transition: 0.25s;
 }
 
 .icon-btn:hover {
   background: #dcedf2;
 }
 
-#voiceToggleBtn.active {
+/* FIXED: Voice toggle active */
+.icon-btn#voiceToggleBtn.active {
   background: #4b9fff !important;
   color: white !important;
 }
@@ -315,7 +316,7 @@ body, .sidebar, .chat-header, .composer {
 
 .vs-btn.active {
   background: #4b9fff;
-  color: #fff;
+  color: white;
 }
 
 /* ------------------------------------------------------
@@ -341,7 +342,7 @@ body, .sidebar, .chat-header, .composer {
   line-height: 1.5;
   opacity: 0;
   transform: translateY(6px);
-  transition: .25s;
+  transition: 0.25s;
 }
 
 .bubble.show {
@@ -356,11 +357,11 @@ body, .sidebar, .chat-header, .composer {
 
 .bubble.bot {
   align-self: flex-start;
-  background: #fff;
+  background: #ffffff;
 }
 
 /* ------------------------------------------------------
-   TYPING
+   TYPING INDICATOR
 ------------------------------------------------------ */
 .floating-typing {
   position: fixed;
@@ -369,9 +370,10 @@ body, .sidebar, .chat-header, .composer {
   padding: 12px 16px;
   background: #ffffffcc;
   border-radius: 16px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   backdrop-filter: blur(12px);
   display: none;
+  z-index: 2000;
 }
 
 /* ------------------------------------------------------
@@ -403,9 +405,8 @@ body, .sidebar, .chat-header, .composer {
   cursor: pointer;
 }
 
-.send-btn.loading {
-  opacity: .7;
-  pointer-events: none;
+.send-btn:hover {
+  background: #3c92cc;
 }
 
 /* ------------------------------------------------------
@@ -414,12 +415,12 @@ body, .sidebar, .chat-header, .composer {
 .emoji-picker {
   position: fixed;
   bottom: 110px;
-  right: 60px;
+  right: 70px;
   width: 300px;
   background: #fff;
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 12px 30px rgba(0,0,0,.15);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
   display: none;
   max-height: 260px;
   overflow-y: auto;
@@ -440,7 +441,7 @@ body, .sidebar, .chat-header, .composer {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.4);
+  background: rgba(0, 0, 0, 0.4);
   display: none;
   justify-content: center;
   align-items: center;
@@ -452,16 +453,16 @@ body, .sidebar, .chat-header, .composer {
   padding: 26px;
   width: 320px;
   border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.15);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
 }
 
 /* ------------------------------------------------------
-   AUTH
+   AUTH MODAL
 ------------------------------------------------------ */
 .auth-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.35);
+  background: rgba(0, 0, 0, 0.35);
   display: none;
   align-items: center;
   justify-content: center;
@@ -478,7 +479,6 @@ body, .sidebar, .chat-header, .composer {
   gap: 12px;
 }
 
-/* Buttons */
 .btn-primary {
   padding: 12px;
   border-radius: 8px;
@@ -504,15 +504,15 @@ body, .sidebar, .chat-header, .composer {
    WALLPAPERS
 ------------------------------------------------------ */
 body.wall-default .chat-area {
-  background: linear-gradient(135deg,#e8f5fb,#f8fcff) !important;
+  background: linear-gradient(135deg, #e8f5fb, #f8fcff) !important;
 }
 
 body.wall-lavender .chat-area {
-  background: linear-gradient(135deg,#eee4ff,#f6f4ff) !important;
+  background: linear-gradient(135deg, #eee4ff, #f6f4ff) !important;
 }
 
 body.wall-nature .chat-area {
-  background: url('nature.jpg') center/cover no-repeat !important;
+  background: url("nature.jpg") center/cover no-repeat !important;
 }
 
 body.wall-dark .chat-area {
@@ -520,42 +520,42 @@ body.wall-dark .chat-area {
 }
 
 /* ------------------------------------------------------
-   DARK THEME (Highest Priority)
+   DARK THEME
 ------------------------------------------------------ */
 body.theme-dark {
   background: #071019 !important;
   color: #e0f3ff !important;
 }
 
-.theme-dark .sidebar,
-.theme-dark .composer,
-.theme-dark .chat-header {
+body.theme-dark .sidebar,
+body.theme-dark .composer,
+body.theme-dark .chat-header {
   background: #0d1b25cc !important;
   color: #e8faff !important;
 }
 
-.theme-dark .session-item {
+body.theme-dark .session-item {
   background: #102431 !important;
   color: #d3edff !important;
 }
 
-.theme-dark .session-item.active {
+body.theme-dark .session-item.active {
   background: #1a394e !important;
 }
 
-.theme-dark .bubble.user {
+body.theme-dark .bubble.user {
   background: #103549 !important;
   color: #d1f4ff !important;
 }
 
-.theme-dark .bubble.bot {
+body.theme-dark .bubble.bot {
   background: #0d1f2b !important;
   color: #dbf2ff !important;
 }
 
-/* Dark overrides wallpaper */
-.theme-dark.wall-nature .chat-area,
-.theme-dark.wall-lavender .chat-area,
-.theme-dark.wall-default .chat-area {
+/* wallpaper override when dark */
+body.theme-dark.wall-default .chat-area,
+body.theme-dark.wall-lavender .chat-area,
+body.theme-dark.wall-nature .chat-area {
   background: #0b1a27 !important;
 }

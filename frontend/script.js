@@ -1,11 +1,10 @@
 /* -------------------------------------------------------
-   FINAL — script.js (Matched to final app.py)
-   • All routes fixed (DELETE, rename, pin, etc.)
-   • Full session refresh fixed
-   • No double messages
-   • Voice selector + STT + TTS stable
-   • Sidebar, ripple, search, drag, swipe fixed
-   • Dark mode + wallpapers perfected
+   FINAL RELAXBUDDY — script.js (PART 1)
+   • Fully matched with final app.py
+   • Dark mode + wallpaper fixed
+   • Sidebar collapse + resizer fixed
+   • SSE streaming stable
+   • Profile, emoji, voice, STT fixed
 ------------------------------------------------------- */
 
 const API_BASE = "http://127.0.0.1:5000";
@@ -28,7 +27,6 @@ const state = {
 // -------------------------
 const $ = (id) => document.getElementById(id);
 
-// Cache references
 let refs = {};
 
 function cacheRefs() {
@@ -93,7 +91,7 @@ function cacheRefs() {
 // Utility
 // -------------------------
 function showToast(text, type = "info") {
-  alert(text); // minimal fallback
+  alert(text);
 }
 
 function authHeaders(json = true) {
@@ -104,10 +102,9 @@ function authHeaders(json = true) {
 }
 
 function escapeHtml(t = "") {
-  return t
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return t.replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
 }
 
 function nl2br(t = "") {
@@ -139,7 +136,7 @@ function appendBot(text) {
 }
 
 // -------------------------
-// Typing Indicators
+// Typing Indicator
 // -------------------------
 function showFloatingTyping() {
   refs.floatingTypingEl.style.display = "block";
@@ -149,7 +146,7 @@ function hideFloatingTyping() {
 }
 
 // -------------------------
-// THEME + WALLPAPER
+// Theme + Wallpaper
 // -------------------------
 function applyWallpaper(w) {
   document.body.classList.remove(
@@ -163,11 +160,13 @@ function applyWallpaper(w) {
 
 function loadTheme() {
   const t = localStorage.getItem("rb_theme") || "light";
+
   if (t === "dark") document.body.classList.add("theme-dark");
   else document.body.classList.remove("theme-dark");
 
   const w = localStorage.getItem("rb_wallpaper") || "wall-default";
   applyWallpaper(w);
+
   if (refs.wallpaperSelect) refs.wallpaperSelect.value = w;
 }
 
@@ -182,7 +181,7 @@ function wallpaperChanged(v) {
 }
 
 // -------------------------
-// PROFILE
+// Profile
 // -------------------------
 function loadProfile() {
   const p = JSON.parse(localStorage.getItem("rb_profile") || "{}");
@@ -231,12 +230,8 @@ async function login(username, password) {
 }
 
 // -------------------------
-// SESSIONS
+// SESSIONS LOAD + OPEN
 // -------------------------
-function extractId(s) {
-  return s.id || s.session_id;
-}
-
 async function fetchSessions() {
   if (!state.token) return;
   const r = await fetch(`${API_BASE}/sessions`, {
@@ -287,21 +282,19 @@ async function openSession(id) {
   const msgs = await r.json();
   refs.messagesEl.innerHTML = "";
   msgs.forEach((m) => {
-    if (m.sender === "user") appendUser(m.text);
-    else appendBot(m.text);
+    m.sender === "user" ? appendUser(m.text) : appendBot(m.text);
   });
 
   state.activeSessionId = id;
 
-  // set active UI
+  // UI active state
   document.querySelectorAll(".session-item").forEach((i) => {
     i.classList.toggle("active", i.dataset.id == id);
   });
 
   const s = state.sessions.find((x) => x.id == id);
-  if (refs.activeChatTitle) refs.activeChatTitle.textContent = s?.name || "Chat";
+  refs.activeChatTitle.textContent = s?.name || "Chat";
 }
-
 // -------------------------
 // SESSION DELETE / RENAME / PIN
 // -------------------------
@@ -314,6 +307,7 @@ async function deleteSessionFromServer(id) {
   if (r.ok) {
     showToast("Deleted");
     await fetchSessions();
+
     if (state.activeSessionId == id) {
       refs.messagesEl.innerHTML = "";
       state.activeSessionId = null;
@@ -324,11 +318,13 @@ async function deleteSessionFromServer(id) {
 async function renameSession(id) {
   const name = prompt("Rename session");
   if (!name) return;
+
   const r = await fetch(`${API_BASE}/session/${id}/rename`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ name }),
   });
+
   if (r.ok) showToast("Renamed");
   await fetchSessions();
 }
@@ -339,24 +335,27 @@ async function togglePin(id, isPinned) {
     headers: authHeaders(),
     body: JSON.stringify({ pinned: isPinned }),
   });
+
   if (r.ok) showToast(isPinned ? "Pinned" : "Unpinned");
   await fetchSessions();
 }
 
 // -------------------------
-// STREAMING CHAT
+// STREAMING CHAT (SSE)
 // -------------------------
 async function startStreaming(text, sid) {
   appendUser(text);
   showFloatingTyping();
 
-  if (state.streamingAbortController)
+  // Abort previous stream
+  if (state.streamingAbortController) {
     try { state.streamingAbortController.abort(); } catch {}
+  }
 
   const controller = new AbortController();
   state.streamingAbortController = controller;
 
-  // Create bot bubble to stream into
+  // Create new bot bubble
   const div = document.createElement("div");
   div.className = "bubble bot show";
   div.innerHTML = `<div class="text"></div>`;
@@ -380,18 +379,17 @@ async function startStreaming(text, sid) {
       if (done) break;
 
       const chunk = decoder.decode(value);
-      const pieces = chunk.split("\n");
+      const lines = chunk.split("\n");
 
-      pieces.forEach((p) => {
-        if (p.startsWith("data: ")) {
-          const t = p.replace("data: ", "");
+      lines.forEach((l) => {
+        if (l.startsWith("data: ")) {
+          const t = l.replace("data: ", "");
           full += t;
           textNode.innerHTML = nl2br(escapeHtml(full));
           scrollBottom();
         }
       });
     }
-
   } catch (e) {
     console.log("Stream error", e);
     textNode.innerHTML += "<br><i>[Stream error]</i>";
@@ -403,18 +401,19 @@ async function startStreaming(text, sid) {
 }
 
 // -------------------------
-// SEND
+// SEND MESSAGE
 // -------------------------
 async function sendMessage() {
   const t = refs.inputEl.value.trim();
   if (!t) return;
   if (!state.token) return showToast("Login first");
+
   refs.inputEl.value = "";
   startStreaming(t, state.activeSessionId);
 }
 
 // -------------------------
-// SIDEBAR
+// SIDEBAR RENDERING
 // -------------------------
 function renderSessions() {
   refs.sectionPinned.innerHTML = "";
@@ -436,19 +435,20 @@ function renderSessions() {
     el.innerHTML = `
       <div class="session-row">
         <div class="chat-icon">${(s.name || "?")[0].toUpperCase()}</div>
-        <div style="flex:1">${s.name}</div>
+        <div class="chat-name">${s.name}</div>
         ${s.pinned ? `<div class="unread-dot"></div>` : ""}
       </div>
+
       <div class="chat-menu">
         <button data-act="pin">${s.pinned ? "Unpin" : "Pin"}</button>
         <button data-act="rename">Rename</button>
         <button data-act="delete">Delete</button>
       </div>
+
       <div class="delete-bg">🗑</div>
-      <div class="hold-delete"></div>
     `;
 
-    // place in category
+    // place in section
     if (s.pinned) refs.sectionPinned.appendChild(el);
     else if (dateStr === today) refs.sectionToday.appendChild(el);
     else if (now - d < 86400 * 1000 * 2) refs.sectionYesterday.appendChild(el);
@@ -458,19 +458,25 @@ function renderSessions() {
   bindSessionItems();
 }
 
+// -------------------------
+// SESSION ITEM INTERACTIONS
+// -------------------------
 function bindSessionItems() {
   document.querySelectorAll(".session-item").forEach((el) => {
     const id = el.dataset.id;
 
+    // open chat
     el.onclick = (e) => {
       if (e.target.closest(".chat-menu")) return;
       openSession(id);
     };
 
+    // menu actions
     el.querySelectorAll(".chat-menu button").forEach((b) => {
       b.onclick = (ev) => {
         ev.stopPropagation();
         const act = b.dataset.act;
+
         if (act === "delete") deleteSessionFromServer(id);
         if (act === "rename") renameSession(id);
         if (act === "pin") {
@@ -480,12 +486,12 @@ function bindSessionItems() {
       };
     });
 
+    // swipe-delete button
     const delBg = el.querySelector(".delete-bg");
-    if (delBg)
-      delBg.onclick = (ev) => {
-        ev.stopPropagation();
-        deleteSessionFromServer(id);
-      };
+    delBg.onclick = (ev) => {
+      ev.stopPropagation();
+      deleteSessionFromServer(id);
+    };
   });
 }
 
@@ -495,16 +501,16 @@ function bindSessionItems() {
 function bindSearch() {
   refs.sessionSearch.oninput = () => {
     const q = refs.sessionSearch.value.toLowerCase();
+
     document.querySelectorAll(".session-item").forEach((el) => {
-      el.style.display = el.textContent.toLowerCase().includes(q)
-        ? "flex"
-        : "none";
+      el.style.display =
+        el.textContent.toLowerCase().includes(q) ? "flex" : "none";
     });
   };
 }
 
 // -------------------------
-// SIDEBAR TOGGLE + RESIZER
+// SIDEBAR COLLAPSE + RESIZER
 // -------------------------
 function bindSidebar() {
   refs.sidebarToggle.onclick = () => {
@@ -518,17 +524,21 @@ function bindSidebar() {
   const saved = localStorage.getItem("rb_sidebar");
   if (saved == "1") refs.sidebar.classList.add("collapsed");
 
+  // resizer
   let resizing = false;
+
   refs.sidebarResizer.onmousedown = () => {
     resizing = true;
     document.body.style.cursor = "ew-resize";
   };
+
   document.onmousemove = (e) => {
     if (!resizing) return;
     const w = Math.min(520, Math.max(140, e.clientX));
     refs.sidebar.style.width = w + "px";
     localStorage.setItem("rb_sidebar_width", w);
   };
+
   document.onmouseup = () => {
     resizing = false;
     document.body.style.cursor = "default";
@@ -545,13 +555,12 @@ let voices = [];
 
 function loadVoices() {
   voices = speechSynthesis.getVoices();
-
   state.voicesLoaded = true;
 }
 
 if ("speechSynthesis" in window) {
   window.speechSynthesis.onvoiceschanged = loadVoices;
-  setTimeout(loadVoices, 300);
+  setTimeout(loadVoices, 250);
 }
 
 function detectLang(t) {
@@ -570,14 +579,14 @@ function speak(text) {
 }
 
 // -------------------------
-// STT (SpeechRecognition)
+// SPEECH TO TEXT (STT)
 // -------------------------
 let recognition = null,
   recognizing = false;
 
-if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-  const SR =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+if ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
   recognition = new SR();
   recognition.lang = "en-US";
   recognition.interimResults = true;
@@ -595,26 +604,27 @@ if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
     refs.voiceToggleBtn.classList.remove("active");
   };
   recognition.onresult = (ev) => {
-    let f = "";
+    let final = "";
     for (let i = 0; i < ev.results.length; i++) {
-      if (ev.results[i].isFinal) f += ev.results[i][0].transcript;
+      if (ev.results[i].isFinal) final += ev.results[i][0].transcript;
     }
-    if (f) refs.inputEl.value = f;
+    if (final) refs.inputEl.value = final;
   };
 }
 
 function toggleSTT() {
-  if (!recognition) return showToast("STT not supported");
-  if (!recognizing) recognition.start();
-  else recognition.stop();
+  if (!recognition) return showToast("Speech recognition not supported");
+  recognizing ? recognition.stop() : recognition.start();
 }
 
 // -------------------------
 // EMOJI PANEL
 // -------------------------
 const EMOJIS = ["😀","😄","😁","😂","🙂","😍","😴","😢","😭","😡","👏","🙏","👍","👎"];
+
 function buildEmojiPanel() {
   refs.emojiPicker.innerHTML = "";
+
   EMOJIS.forEach((e) => {
     const b = document.createElement("button");
     b.className = "emoji-btn";
@@ -634,6 +644,7 @@ function bindEvents() {
   // Auth
   refs.loginBtn.onclick = () =>
     login(refs.loginUser.value, refs.loginPass.value);
+
   refs.signupBtn.onclick = () =>
     signup(refs.loginUser.value, refs.loginPass.value).then((d) =>
       showToast(d.message || d.error)
@@ -650,6 +661,7 @@ function bindEvents() {
 
   // Composer
   refs.sendBtn.onclick = sendMessage;
+
   refs.inputEl.onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -663,7 +675,7 @@ function bindEvents() {
       refs.emojiPicker.style.display === "block" ? "none" : "block";
   };
 
-  // Voice selector
+  // Voice mode (manual)
   refs.maleBtn.onclick = () => (state.voiceMode = "male");
   refs.femaleBtn.onclick = () => (state.voiceMode = "female");
 
@@ -681,26 +693,31 @@ function bindEvents() {
     if (!state.activeSessionId) return;
     window.open(`${API_BASE}/export/${state.activeSessionId}`, "_blank");
   };
+
   refs.deleteBtn.onclick = () => {
     if (!state.activeSessionId) return;
     if (confirm("Delete this session?"))
       deleteSessionFromServer(state.activeSessionId);
   };
-  refs.lockBtn.onclick = () => showToast("Locking session coming soon");
+
+  refs.lockBtn.onclick = () => showToast("Session lock coming soon");
 
   // Theme + wallpaper
   refs.themeToggle.onclick = toggleTheme;
-  refs.wallpaperSelect.onchange = (e) => wallpaperChanged(e.target.value);
+  refs.wallpaperSelect.onchange = (e) =>
+    wallpaperChanged(e.target.value);
 
   // New chat ripple
   refs.newSessionBtn.onclick = (e) => {
     const rect = e.target.getBoundingClientRect();
     e.target.style.setProperty("--ripple-x", e.clientX - rect.left + "px");
     e.target.style.setProperty("--ripple-y", e.clientY - rect.top + "px");
+
     e.target.classList.remove("ripple-active");
     void e.target.offsetWidth;
     e.target.classList.add("ripple-active");
-    setTimeout(createNewSession, 120);
+
+    setTimeout(createNewSession, 140);
   };
 
   // Sidebar + search
@@ -729,5 +746,5 @@ window.addEventListener("DOMContentLoaded", () => {
   else fetchSessions();
 
   bindEvents();
-  console.log("RelaxBuddy FINAL JS Ready");
+  console.log("RelaxBuddy: FINAL JS Loaded");
 });
