@@ -10,7 +10,7 @@
 <body class="wall-default">
 
 <!-- AUTH MODAL -->
-<div id="authModal" class="auth-modal">
+<div id="authModal" class="auth-modal" style="display:flex;">
   <div class="auth-box">
     <h2>Welcome to RelaxBuddy</h2>
 
@@ -45,13 +45,13 @@
   <aside class="sidebar">
     <h2 class="logo">RelaxBuddy</h2>
 
-    <!-- New Chat -->
+    <!-- Logout Button -->
+    <button id="logoutBtn" class="btn-secondary logout-btn">Logout</button>
+
     <button id="newSessionBtn" class="newchat-anim btn-primary">+ New Chat</button>
 
-    <!-- Search -->
     <input id="sessionSearch" class="session-search" type="text" placeholder="Search chats..." />
 
-    <!-- Sections -->
     <div class="sidebar-sections">
 
       <div class="section">
@@ -84,7 +84,6 @@
 
     </div>
 
-    <!-- Resizer -->
     <div class="sidebar-resizer"></div>
   </aside>
 
@@ -93,16 +92,11 @@
 
     <!-- HEADER -->
     <div class="chat-header">
-
-      <!-- Sidebar toggle -->
       <button id="sidebarToggle" class="icon-btn">☰</button>
-
       <h3 id="activeChatTitle">Online</h3>
 
-      <!-- Tools -->
       <div class="chat-tools">
 
-        <!-- Voice selector -->
         <div class="voice-selector">
           <button id="enMaleBtn" class="vs-btn">EN Male</button>
           <button id="enFemaleBtn" class="vs-btn">EN Female</button>
@@ -110,20 +104,16 @@
           <button id="hiFemaleBtn" class="vs-btn">HI Female</button>
         </div>
 
-        <!-- Auto voice -->
         <button id="maleBtn" class="icon-btn">👨</button>
         <button id="femaleBtn" class="icon-btn">👩</button>
 
-        <!-- Tools -->
         <button id="searchBtn" class="icon-btn">🔍</button>
         <button id="exportBtn" class="icon-btn">📄</button>
         <button id="lockBtn" class="icon-btn">🔒</button>
         <button id="deleteBtn" class="icon-btn">🗑️</button>
 
-        <!-- Theme -->
         <button id="themeToggle" class="icon-btn">🌙</button>
 
-        <!-- Wallpaper -->
         <select id="wallpaperSelect" class="wallpaper-select">
           <option value="wall-default">Default</option>
           <option value="wall-nature">Nature</option>
@@ -131,13 +121,10 @@
           <option value="wall-dark">Dark</option>
         </select>
 
-        <!-- Emoji -->
         <button id="emojiBtn" class="icon-btn">😊</button>
 
-        <!-- Voice -->
         <button id="voiceToggleBtn" class="icon-btn">🎤</button>
 
-        <!-- Profile -->
         <button id="profileOpenBtn" class="icon-btn">👤</button>
       </div>
     </div>
@@ -148,7 +135,7 @@
     <!-- Messages -->
     <div id="messages" class="messages"></div>
 
-    <!-- Floating typing -->
+    <!-- Floating typing indicator -->
     <div id="floatingTyping" class="floating-typing">
       <div class="typing-bubble">
         <div class="typing">
@@ -157,9 +144,34 @@
       </div>
     </div>
 
+    <!-- Recording bubble -->
+    <div id="recordingBubble" class="recording-bubble" style="display:none;" aria-hidden="true">
+      <div class="rec-left">
+        <div class="record-icon">🔴</div>
+        <div class="rec-text">Recording</div>
+      </div>
+
+      <div class="rec-center">
+        <div id="recordTimer" class="record-timer">0:00</div>
+
+        <div class="waveform" id="waveform">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </div>
+      </div>
+
+      <div class="rec-right">
+        <div class="cancel-tip">Slide left to cancel</div>
+      </div>
+    </div>
+
     <!-- Composer -->
     <div class="composer">
       <textarea id="input" placeholder="Type your message..." rows="1"></textarea>
+      <button id="recordBtn" class="icon-btn record-btn" aria-label="Hold to record">🎤</button>
       <button id="sendBtn" class="send-btn btn-primary">Send</button>
     </div>
 

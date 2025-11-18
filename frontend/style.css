@@ -44,7 +44,7 @@ body,
   overflow: hidden;
 }
 
-/* Hide everything in collapsed mode */
+/* Hide when collapsed */
 .sidebar.collapsed .logo,
 .sidebar.collapsed .newchat-anim,
 .sidebar.collapsed .session-search,
@@ -60,6 +60,20 @@ body,
   font-weight: 700;
   margin-bottom: 18px;
   color: #06324a;
+}
+
+/* Logout button style (previously missing) */
+.logout-btn {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: #f2f3f5;
+  border: none;
+  cursor: pointer;
+}
+.logout-btn:hover {
+  background: #e4e5e7;
 }
 
 /* New Chat Button Ripple */
@@ -149,10 +163,11 @@ body,
   flex-direction: column;
   gap: 10px;
   transition: max-height 0.25s ease, opacity 0.25s ease;
+  max-height: 600px;
 }
 
 .section-body.collapsed {
-  max-height: 0;
+  max-height: 0 !important;
   opacity: 0;
   overflow: hidden;
 }
@@ -210,7 +225,6 @@ body,
   background: #ff4444;
 }
 
-/* Menu */
 .chat-menu {
   display: flex;
   gap: 10px;
@@ -230,7 +244,6 @@ body,
   background: #d4e9ff;
 }
 
-/* Swipe background */
 .delete-bg {
   position: absolute;
   top: 0;
@@ -265,6 +278,7 @@ body,
   display: flex;
   flex-direction: column;
   background: linear-gradient(135deg, #e8f5fb, #f8fcff);
+  position: relative;
 }
 
 /* ------------------------------------------------------
@@ -278,6 +292,13 @@ body,
   background: #ffffffcc;
   border-bottom: 1px solid #d2e4ee;
   backdrop-filter: blur(14px);
+  z-index: 30;
+}
+
+.chat-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .icon-btn {
@@ -293,7 +314,6 @@ body,
   background: #dcedf2;
 }
 
-/* FIXED: Voice toggle active */
 .icon-btn#voiceToggleBtn.active {
   background: #4b9fff !important;
   color: white !important;
@@ -343,6 +363,7 @@ body,
   opacity: 0;
   transform: translateY(6px);
   transition: 0.25s;
+  word-break: break-word;
 }
 
 .bubble.show {
@@ -365,7 +386,7 @@ body,
 ------------------------------------------------------ */
 .floating-typing {
   position: fixed;
-  bottom: 120px;
+  bottom: 140px;
   right: 30px;
   padding: 12px 16px;
   background: #ffffffcc;
@@ -376,6 +397,29 @@ body,
   z-index: 2000;
 }
 
+.typing span {
+  width: 6px;
+  height: 6px;
+  background: #4b9fff;
+  display: inline-block;
+  margin: 0 2px;
+  border-radius: 50%;
+  animation: typingBounce 1.2s infinite;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typingBounce {
+  0%, 70%, 100% { transform: translateY(0); }
+  35% { transform: translateY(-6px); }
+}
+
 /* ------------------------------------------------------
    COMPOSER
 ------------------------------------------------------ */
@@ -384,6 +428,7 @@ body,
   padding: 14px;
   background: #ffffffcc;
   border-top: 1px solid #d2e4ee;
+  z-index: 40;
 }
 
 .composer textarea {
@@ -414,7 +459,7 @@ body,
 ------------------------------------------------------ */
 .emoji-picker {
   position: fixed;
-  bottom: 110px;
+  bottom: 180px; /* fixed overlap issue */
   right: 70px;
   width: 300px;
   background: #fff;
@@ -519,6 +564,11 @@ body.wall-dark .chat-area {
   background: #0a121b !important;
 }
 
+/* Dark mode wallpaper override fix */
+body.theme-dark.wall-dark .chat-area {
+  background: #000 !important;
+}
+
 /* ------------------------------------------------------
    DARK THEME
 ------------------------------------------------------ */
@@ -553,9 +603,116 @@ body.theme-dark .bubble.bot {
   color: #dbf2ff !important;
 }
 
-/* wallpaper override when dark */
-body.theme-dark.wall-default .chat-area,
-body.theme-dark.wall-lavender .chat-area,
-body.theme-dark.wall-nature .chat-area {
-  background: #0b1a27 !important;
+body.theme-dark .audio-preview {
+  background: #102431 !important;
+  color: #d1efff !important;
+  border-color: #1c3545 !important;
+}
+
+/* ------------------------------------------------------
+   RECORDING BUBBLE
+------------------------------------------------------ */
+.recording-bubble {
+  position: fixed;
+  bottom: 120px;
+  left: 20px;
+  right: 20px;
+  background: #ffffffdd;
+  padding: 14px 18px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px);
+  z-index: 3000;
+
+  /* Fix: Prevent blocking UI behind */
+  pointer-events: none;
+}
+
+.recording-bubble * {
+  pointer-events: auto;
+}
+
+.rec-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.record-icon {
+  font-size: 18px;
+}
+
+.rec-text {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rec-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.record-timer {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.waveform {
+  height: 50px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.waveform .bar {
+  width: 6px;
+  height: 6px;
+  background: #4ba4dd;
+  border-radius: 4px;
+  transition: height 0.1s ease;
+}
+
+.rec-right {
+  font-size: 12px;
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.record-btn.canceling {
+  background: #ff3b3b !important;
+  color: white !important;
+  transform: scale(1.1);
+}
+
+/* ------------------------------------------------------
+   AUDIO PREVIEW
+------------------------------------------------------ */
+.audio-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  background: #ffffffdd;
+  border-radius: 14px;
+  padding: 10px 14px;
+  margin: 10px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+  animation: fadeInUp 0.25s ease;
+}
+
+@keyframes fadeInUp {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

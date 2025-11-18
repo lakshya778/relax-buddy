@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify, send_file, g, Response
 from flask_cors import CORS
+import logging
 
 # Optional model + TTS libs (if not used you can safely comment out)
 try:
@@ -48,6 +49,7 @@ TOKEN_TTL_DAYS = int(os.getenv("RB_TOKEN_TTL_DAYS", "30"))
 # ---------------------------
 app = Flask(__name__)
 CORS(app)
+logging.basicConfig(level=logging.INFO)
 
 # ---------------------------
 # DB helpers + migrations
@@ -55,6 +57,7 @@ CORS(app)
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
+        # allow bytes/blobs to come through unchanged
         db = g._database = sqlite3.connect(DB_PATH, check_same_thread=False)
         db.row_factory = sqlite3.Row
     return db
@@ -128,19 +131,40 @@ with app.app_context():
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
 
-def check_password(password: str, pw_hash: bytes) -> bool:
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), pw_hash)
-    except Exception:
-        return False
-
 def hash_pin(pin: str) -> bytes:
     return bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt())
 
-def check_pin(pin: str, pin_hash: bytes) -> bool:
+def _to_bytes(b):
+    """Normalize various types returned from sqlite into bytes for bcrypt."""
+    if b is None:
+        return None
+    if isinstance(b, bytes):
+        return b
+    if isinstance(b, memoryview):
+        return b.tobytes()
+    if isinstance(b, str):
+        # sometimes sqlite returns text for BLOBs (rare) - encode
+        return b.encode("utf-8")
+    return None
+
+def check_password(password: str, pw_hash) -> bool:
     try:
-        return bcrypt.checkpw(pin.encode("utf-8"), pin_hash)
-    except Exception:
+        pw_hash_b = _to_bytes(pw_hash)
+        if not pw_hash_b:
+            return False
+        return bcrypt.checkpw(password.encode("utf-8"), pw_hash_b)
+    except Exception as e:
+        app.logger.debug("check_password error: %s", e)
+        return False
+
+def check_pin(pin: str, pin_hash) -> bool:
+    try:
+        pin_hash_b = _to_bytes(pin_hash)
+        if not pin_hash_b:
+            return False
+        return bcrypt.checkpw(pin.encode("utf-8"), pin_hash_b)
+    except Exception as e:
+        app.logger.debug("check_pin error: %s", e)
         return False
 
 def generate_token():
@@ -173,6 +197,7 @@ def require_auth(fn):
         user = get_user_by_token(token)
         if not user:
             return jsonify({"error": "Authentication required"}), 401
+        # attach the user row to request for handlers
         request.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -181,19 +206,36 @@ def require_admin(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         user = getattr(request, "user", None)
-        if not user or user["is_admin"] != 1:
+        try:
+            is_admin = int(user["is_admin"]) if user and user["is_admin"] is not None else 0
+        except Exception:
+            is_admin = 0
+        if not user or is_admin != 1:
             return jsonify({"error": "Admin required"}), 403
         return fn(*args, **kwargs)
     return wrapper
+
+# ---------------------------
+# Helpers to parse input (JSON or form)
+# ---------------------------
+def _get_field(source, key, default=""):
+    # source may be JSON dict or ImmutableMultiDict (request.form)
+    if source is None:
+        return default
+    val = source.get(key)
+    return val if val is not None else default
 
 # ---------------------------
 # Auth endpoints
 # ---------------------------
 @app.route("/signup", methods=["POST"])
 def signup():
-    data = request.get_json() or {}
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
+    # accept JSON or form-encoded
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form
+    username = (_get_field(data, "username") or "").strip()
+    password = _get_field(data, "password") or ""
     if not username or not password:
         return jsonify({"error": "username & password required"}), 400
 
@@ -206,15 +248,28 @@ def signup():
             (username, pw_hash, now),
         )
         db.commit()
-        return jsonify({"ok": True, "message": "User created"}), 201
+
+        # Auto-generate token on signup to ease frontend flow
+        row = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        token = generate_token()
+        expiry = (datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS)).isoformat()
+        db.execute("UPDATE users SET token = ?, token_expiry = ? WHERE id = ?", (token, expiry, row["id"]))
+        db.commit()
+
+        return jsonify({"ok": True, "message": "User created", "token": token, "user_id": row["id"]}), 201
     except sqlite3.IntegrityError:
         return jsonify({"error": "username already exists"}), 400
+    except Exception as e:
+        app.logger.error("signup error: %s", e)
+        return jsonify({"error": "internal error"}), 500
 
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json() or {}
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form
+    username = (_get_field(data, "username") or "").strip()
+    password = _get_field(data, "password") or ""
     if not username or not password:
         return jsonify({"error": "username & password required"}), 400
 
@@ -240,6 +295,13 @@ def logout():
     db.execute("UPDATE users SET token = NULL, token_expiry = NULL WHERE id = ?", (user["id"],))
     db.commit()
     return jsonify({"ok": True})
+
+# Quick endpoint to check the current authenticated user
+@app.route("/me", methods=["GET"])
+@require_auth
+def me():
+    user = request.user
+    return jsonify({"id": user["id"], "username": user["username"], "is_admin": bool(user["is_admin"]), "created_at": user["created_at"]})
 
 # ---------------------------
 # TTS endpoints (simple wrappers)
@@ -278,7 +340,7 @@ def tts_male():
         process = subprocess.Popen(
             [
                 "ffmpeg", "-i", "pipe:0",
-                "-af", "asetrate=44100*0.9,aresample=44100", # gentle shift
+                "-af", "asetrate=44100*0.9,aresample=44100",
                 "-f", "mp3", "pipe:1"
             ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -396,9 +458,6 @@ def new_session():
     row = get_session(sid)
     return jsonify({"session_id": sid, "id": sid, "name": row["name"], "created_at": row["created_at"], "updated_at": row["updated_at"]})
 
-# ---------------------------
-# Rename, Pin, Delete endpoints
-# ---------------------------
 @app.route("/session/<int:session_id>/rename", methods=["POST"])
 @require_auth
 def rename_session(session_id):
@@ -433,7 +492,6 @@ def pin_session(session_id):
     db.commit()
     return jsonify({"ok": True, "pinned": bool(pinned)})
 
-# RESTful delete (recommended)
 @app.route("/session/<int:session_id>", methods=["DELETE"])
 @require_auth
 def delete_session(session_id):
@@ -449,7 +507,6 @@ def delete_session(session_id):
     db.commit()
     return jsonify({"ok": True})
 
-# Backwards-compatible delete route (POST)
 @app.route("/session/<int:session_id>/delete", methods=["POST"])
 @require_auth
 def delete_session_post(session_id):
@@ -522,7 +579,6 @@ def chat_stream():
                 save_message_db(session_id, "bot", full_reply)
         except Exception as e:
             app.logger.error("Error saving bot message: %s", e)
-            # still emit a finishing event for client
             yield f"data: [Save error]\n\n"
 
     return Response(generate(), mimetype="text/event-stream")
@@ -551,7 +607,8 @@ def chat():
         return jsonify({"error": "forbidden"}), 403
 
     if session["locked"] == 1:
-        return jsonify({"error": "session locked"}, 403)
+        # FIXED: previously returned tuple inside jsonify which produced server error
+        return jsonify({"error": "session locked"}), 403
 
     save_message_db(session_id, "user", msg)
 
