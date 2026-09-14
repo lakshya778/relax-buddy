@@ -1,6 +1,5 @@
-# final app.py — RelaxBuddy (Patched, RESTful + DB migrations)
+# final app.py — RelaxBuddy (Patched, RESTful + DB migrations) — Postgres version
 import os
-import sqlite3
 import secrets
 import bcrypt
 import io
@@ -9,6 +8,9 @@ from functools import wraps
 from flask import Flask, request, jsonify, send_file, g, Response
 from flask_cors import CORS
 import logging
+
+import psycopg2
+import psycopg2.extras
 
 # Optional model + TTS libs (if not used you can safely comment out)
 try:
@@ -41,7 +43,10 @@ import subprocess
 # ---------------------------
 # Config
 # ---------------------------
-DB_PATH = os.getenv("RB_DB_PATH", "relaxbuddy.db")
+# Render (and most Postgres hosts) give you a DATABASE_URL like:
+# postgres://user:password@host:port/dbname
+# psycopg2 accepts both "postgres://" and "postgresql://" prefixes.
+DATABASE_URL = os.getenv("DATABASE_URL")
 TOKEN_TTL_DAYS = int(os.getenv("RB_TOKEN_TTL_DAYS", "30"))
 
 # ---------------------------
@@ -54,32 +59,55 @@ logging.basicConfig(level=logging.INFO)
 # ---------------------------
 # DB helpers + migrations
 # ---------------------------
+class DBWrapper:
+    """Thin wrapper so the rest of the code can keep calling db.execute(sql, params)
+    the same way it did with sqlite3.Connection.execute(), and get back a cursor
+    it can call .fetchone()/.fetchall() on."""
+    def __init__(self, conn):
+        self.conn = conn
+
+    def execute(self, sql, params=()):
+        cur = self.conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
+
+
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
-        # allow bytes/blobs to come through unchanged
-        db = g._database = sqlite3.connect(DB_PATH, check_same_thread=False)
-        db.row_factory = sqlite3.Row
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+        db = g._database = DBWrapper(conn)
     return db
 
 def ensure_column(table, column, definition):
-    """Add column if missing (simple sqlite ALTER)."""
+    """Add column if missing (Postgres version of the old sqlite PRAGMA check)."""
     db = get_db()
-    cur = db.execute(f"PRAGMA table_info({table});").fetchall()
-    cols = [c["name"] for c in cur]
+    cur = db.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table,)
+    )
+    cols = [r["column_name"] for r in cur.fetchall()]
     if column not in cols:
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
         db.commit()
 
 def init_db():
     db = get_db()
-    c = db.cursor()
     # users
-    c.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             username TEXT UNIQUE,
-            password_hash BLOB,
+            password_hash BYTEA,
             token TEXT,
             token_expiry TEXT,
             is_admin INTEGER DEFAULT 0,
@@ -87,21 +115,21 @@ def init_db():
         );
     """)
     # sessions
-    c.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER,
             name TEXT,
             created_at TEXT,
             locked INTEGER DEFAULT 0,
-            pin_hash BLOB,
+            pin_hash BYTEA,
             FOREIGN KEY(user_id) REFERENCES users(id)
         );
     """)
     # messages
-    c.execute("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             session_id INTEGER,
             sender TEXT,
             text TEXT,
@@ -135,7 +163,8 @@ def hash_pin(pin: str) -> bytes:
     return bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt())
 
 def _to_bytes(b):
-    """Normalize various types returned from sqlite into bytes for bcrypt."""
+    """Normalize various types returned from Postgres (BYTEA comes back as
+    memoryview via psycopg2) into bytes for bcrypt."""
     if b is None:
         return None
     if isinstance(b, bytes):
@@ -143,7 +172,6 @@ def _to_bytes(b):
     if isinstance(b, memoryview):
         return b.tobytes()
     if isinstance(b, str):
-        # sometimes sqlite returns text for BLOBs (rare) - encode
         return b.encode("utf-8")
     return None
 
@@ -180,9 +208,8 @@ def get_user_by_token(token):
     if not token:
         return None
     db = get_db()
-    # token_expiry stored as ISO string — simple comparison works for same format
     row = db.execute(
-        "SELECT * FROM users WHERE token = ? AND token_expiry > ?",
+        "SELECT * FROM users WHERE token = %s AND token_expiry > %s",
         (token, now_iso()),
     ).fetchone()
     return row
@@ -197,7 +224,6 @@ def require_auth(fn):
         user = get_user_by_token(token)
         if not user:
             return jsonify({"error": "Authentication required"}), 401
-        # attach the user row to request for handlers
         request.user = user
         return fn(*args, **kwargs)
     return wrapper
@@ -219,7 +245,6 @@ def require_admin(fn):
 # Helpers to parse input (JSON or form)
 # ---------------------------
 def _get_field(source, key, default=""):
-    # source may be JSON dict or ImmutableMultiDict (request.form)
     if source is None:
         return default
     val = source.get(key)
@@ -230,7 +255,6 @@ def _get_field(source, key, default=""):
 # ---------------------------
 @app.route("/signup", methods=["POST"])
 def signup():
-    # accept JSON or form-encoded
     data = request.get_json(silent=True)
     if not data:
         data = request.form
@@ -244,22 +268,23 @@ def signup():
         pw_hash = hash_password(password)
         now = now_iso()
         db.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-            (username, pw_hash, now),
+            "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s)",
+            (username, psycopg2.Binary(pw_hash), now),
         )
         db.commit()
 
-        # Auto-generate token on signup to ease frontend flow
-        row = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        row = db.execute("SELECT id FROM users WHERE username = %s", (username,)).fetchone()
         token = generate_token()
         expiry = (datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS)).isoformat()
-        db.execute("UPDATE users SET token = ?, token_expiry = ? WHERE id = ?", (token, expiry, row["id"]))
+        db.execute("UPDATE users SET token = %s, token_expiry = %s WHERE id = %s", (token, expiry, row["id"]))
         db.commit()
 
         return jsonify({"ok": True, "message": "User created", "token": token, "user_id": row["id"]}), 201
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
+        db.rollback()
         return jsonify({"error": "username already exists"}), 400
     except Exception as e:
+        db.rollback()
         app.logger.error("signup error: %s", e)
         return jsonify({"error": "internal error"}), 500
 
@@ -274,7 +299,7 @@ def login():
         return jsonify({"error": "username & password required"}), 400
 
     db = get_db()
-    row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    row = db.execute("SELECT * FROM users WHERE username = %s", (username,)).fetchone()
     if not row:
         return jsonify({"error": "invalid credentials"}), 401
 
@@ -283,7 +308,7 @@ def login():
 
     token = generate_token()
     expiry = (datetime.utcnow() + timedelta(days=TOKEN_TTL_DAYS)).isoformat()
-    db.execute("UPDATE users SET token = ?, token_expiry = ? WHERE id = ?", (token, expiry, row["id"]))
+    db.execute("UPDATE users SET token = %s, token_expiry = %s WHERE id = %s", (token, expiry, row["id"]))
     db.commit()
     return jsonify({"token": token, "user_id": row["id"], "is_admin": bool(row["is_admin"])}), 200
 
@@ -292,11 +317,10 @@ def login():
 def logout():
     user = request.user
     db = get_db()
-    db.execute("UPDATE users SET token = NULL, token_expiry = NULL WHERE id = ?", (user["id"],))
+    db.execute("UPDATE users SET token = NULL, token_expiry = NULL WHERE id = %s", (user["id"],))
     db.commit()
     return jsonify({"ok": True})
 
-# Quick endpoint to check the current authenticated user
 @app.route("/me", methods=["GET"])
 @require_auth
 def me():
@@ -336,7 +360,6 @@ def tts_male():
         tts = gTTS(text=text, lang="hi")
         tts.write_to_fp(base_buf)
         base_buf.seek(0)
-        # lower pitch via ffmpeg (ensure ffmpeg installed)
         process = subprocess.Popen(
             [
                 "ffmpeg", "-i", "pipe:0",
@@ -357,28 +380,28 @@ def create_session_db(user_id=None, name="Chat"):
     db = get_db()
     now = now_iso()
     cur = db.execute(
-        "INSERT INTO sessions (user_id, name, created_at, updated_at) VALUES (?,?,?,?)",
+        "INSERT INTO sessions (user_id, name, created_at, updated_at) VALUES (%s,%s,%s,%s) RETURNING id",
         (user_id, name, now, now)
     )
+    new_id = cur.fetchone()["id"]
     db.commit()
-    return cur.lastrowid
+    return new_id
 
 def save_message_db(session_id, sender, text):
     db = get_db()
     now = now_time_str()
-    db.execute("INSERT INTO messages (session_id, sender, text, time) VALUES (?,?,?,?)", (session_id, sender, text, now))
-    # update session updated_at
-    db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now_iso(), session_id))
+    db.execute("INSERT INTO messages (session_id, sender, text, time) VALUES (%s,%s,%s,%s)", (session_id, sender, text, now))
+    db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (now_iso(), session_id))
     db.commit()
 
 def get_session(session_id):
     db = get_db()
-    row = db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    row = db.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
     return row
 
 def get_messages_for_session(session_id):
     db = get_db()
-    rows = db.execute("SELECT sender, text, time FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,)).fetchall()
+    rows = db.execute("SELECT sender, text, time FROM messages WHERE session_id = %s ORDER BY id ASC", (session_id,)).fetchall()
     return [{"sender": r["sender"], "text": r["text"], "time": r["time"]} for r in rows]
 
 # ---------------------------
@@ -399,7 +422,6 @@ def detect_crisis(text):
 # ---------------------------
 def call_groq_compound(user_message):
     if client is None:
-        # Model client not configured — return a simple echo for local dev
         return f"I heard: {user_message}"
     try:
         completion = client.chat.completions.create(
@@ -430,7 +452,7 @@ def list_sessions():
     if user["is_admin"] == 1:
         rows = db.execute("SELECT id, name, user_id, created_at, updated_at, locked, pinned FROM sessions ORDER BY COALESCE(updated_at, created_at) DESC").fetchall()
     else:
-        rows = db.execute("SELECT id, name, user_id, created_at, updated_at, locked, pinned FROM sessions WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at) DESC", (user["id"],)).fetchall()
+        rows = db.execute("SELECT id, name, user_id, created_at, updated_at, locked, pinned FROM sessions WHERE user_id = %s ORDER BY COALESCE(updated_at, created_at) DESC", (user["id"],)).fetchall()
     out = [dict(r) for r in rows]
     return jsonify(out)
 
@@ -472,7 +494,7 @@ def rename_session(session_id):
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error":"forbidden"}), 403
     db = get_db()
-    db.execute("UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?", (name, now_iso(), session_id))
+    db.execute("UPDATE sessions SET name = %s, updated_at = %s WHERE id = %s", (name, now_iso(), session_id))
     db.commit()
     return jsonify({"ok": True, "name": name})
 
@@ -488,7 +510,7 @@ def pin_session(session_id):
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error":"forbidden"}), 403
     db = get_db()
-    db.execute("UPDATE sessions SET pinned = ?, updated_at = ? WHERE id = ?", (pinned, now_iso(), session_id))
+    db.execute("UPDATE sessions SET pinned = %s, updated_at = %s WHERE id = %s", (pinned, now_iso(), session_id))
     db.commit()
     return jsonify({"ok": True, "pinned": bool(pinned)})
 
@@ -502,8 +524,8 @@ def delete_session(session_id):
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error":"forbidden"}), 403
     db = get_db()
-    db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    db.execute("DELETE FROM messages WHERE session_id = %s", (session_id,))
+    db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
     db.commit()
     return jsonify({"ok": True})
 
@@ -526,7 +548,6 @@ def chat_stream():
     if not msg:
         return jsonify({"error": "Message required"}), 400
 
-    # create or validate session
     if not session_id:
         session_id = create_session_db(user["id"], "Chat")
 
@@ -534,17 +555,14 @@ def chat_stream():
     if not session:
         return jsonify({"error": "session not found"}), 404
 
-    # ownership check
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error":"forbidden"}), 403
 
-    # save user message
     save_message_db(session_id, "user", msg)
 
     def generate():
         full_reply = ""
         try:
-            # If Groq client available, stream; else simulate
             if client:
                 stream = client.chat.completions.create(
                     model=MODEL_NAME,
@@ -563,7 +581,6 @@ def chat_stream():
                         full_reply += piece
                         yield f"data: {piece}\n\n"
             else:
-                # Local fallback streaming simulation
                 reply = call_groq_compound(msg) or "Sorry, I couldn't respond."
                 for i in range(0, len(reply), 60):
                     piece = reply[i:i+60]
@@ -573,7 +590,6 @@ def chat_stream():
             app.logger.error("STREAM ERROR: %s", e)
             yield "data: [Stream error occurred]\n\n"
 
-        # save final bot message
         try:
             with app.app_context():
                 save_message_db(session_id, "bot", full_reply)
@@ -607,7 +623,6 @@ def chat():
         return jsonify({"error": "forbidden"}), 403
 
     if session["locked"] == 1:
-        # FIXED: previously returned tuple inside jsonify which produced server error
         return jsonify({"error": "session locked"}), 403
 
     save_message_db(session_id, "user", msg)
@@ -641,7 +656,7 @@ def search_messages():
     if session["user_id"] and session["user_id"] != user["id"] and user["is_admin"] != 1:
         return jsonify({"error": "forbidden"}), 403
     db = get_db()
-    rows = db.execute("SELECT id, sender, text, time FROM messages WHERE session_id = ? AND lower(text) LIKE ? ORDER BY id ASC", (session_id, f"%{q}%")).fetchall()
+    rows = db.execute("SELECT id, sender, text, time FROM messages WHERE session_id = %s AND lower(text) LIKE %s ORDER BY id ASC", (session_id, f"%{q}%")).fetchall()
     out = [{"id": r["id"], "sender": r["sender"], "text": r["text"], "time": r["time"]} for r in rows]
     return jsonify(out)
 
@@ -728,7 +743,7 @@ def set_pin(session_id):
         return jsonify({"error":"forbidden"}), 403
     pin_h = hash_pin(pin)
     db = get_db()
-    db.execute("UPDATE sessions SET locked = 1, pin_hash = ?, updated_at = ? WHERE id = ?", (pin_h, now_iso(), session_id))
+    db.execute("UPDATE sessions SET locked = 1, pin_hash = %s, updated_at = %s WHERE id = %s", (psycopg2.Binary(pin_h), now_iso(), session_id))
     db.commit()
     return jsonify({"ok": True})
 
@@ -748,7 +763,7 @@ def unlock_session(session_id):
         return jsonify({"error":"no pin set"}), 400
     if check_pin(pin, pin_hash):
         db = get_db()
-        db.execute("UPDATE sessions SET locked = 0, updated_at = ? WHERE id = ?", (now_iso(), session_id))
+        db.execute("UPDATE sessions SET locked = 0, updated_at = %s WHERE id = %s", (now_iso(), session_id))
         db.commit()
         return jsonify({"ok": True})
     else:
@@ -758,5 +773,5 @@ def unlock_session(session_id):
 # Run
 # ---------------------------
 if __name__ == "__main__":
-    print("RelaxBuddy (SQLite + Auth) running at http://127.0.0.1:5000")
+    print("RelaxBuddy (Postgres + Auth) running at http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=True)
