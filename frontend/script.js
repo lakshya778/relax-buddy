@@ -1,7 +1,7 @@
 // FINAL script.js — RelaxBuddy (FULL, corrected)
 // All previously reported bugs fixed and defensive checks added.
 
-const API_BASE = "http://127.0.0.1:5000";
+const API_BASE = "https://relax-buddy-15fj.onrender.com";
 console.log("RelaxBuddy FINAL script.js loaded");
 
 // -------------------------
